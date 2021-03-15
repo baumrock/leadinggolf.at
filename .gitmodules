@@ -1,3 +1,6 @@
 [submodule "site/modules/RockMigrations"]
 	path = site/modules/RockMigrations
 	url = git@github.com:BernhardBaumrock/RockMigrations.git
+[submodule "rock"]
+	path = rock
+	url = git@github.com:baumrock/RockShell.git
