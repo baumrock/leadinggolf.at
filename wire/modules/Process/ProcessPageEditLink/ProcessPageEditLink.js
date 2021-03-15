@@ -36,8 +36,10 @@ $(document).ready(function() {
 				$fileSelect.append($option);
 			});
 			$wrap.find("p.notes strong").text(selectedPageData.url);
-			$wrap.children().effect('highlight', {}, 500); 
-			$fileSelect.effect('bounce', {}, 50);
+			if($fileSelect.is(":visible")) {
+				$wrap.children().effect('highlight', {}, 500);
+				$fileSelect.effect('bounce', {}, 50);
+			}
 		}); 
 	}
 
@@ -49,6 +51,8 @@ $(document).ready(function() {
 			url = url.replace(/[^.\/]/g, ''); 
 			return url;
 		}
+		
+		var url;
 
 		if(path === ProcessWire.config.ProcessPageEditLink.pageUrl) {
 			// account for the link to self
@@ -62,7 +66,7 @@ $(document).ready(function() {
 
 		} else if(ProcessWire.config.ProcessPageEditLink.pageUrl.indexOf(path) === 0) {
 			// linking to a parent of the current page
-			var url = ProcessWire.config.ProcessPageEditLink.pageUrl.substring(path.length); 
+			url = ProcessWire.config.ProcessPageEditLink.pageUrl.substring(path.length); 
 			if(url.indexOf('/') != -1) {
 				url = slashesToRelative(url); 
 			} else {
@@ -71,7 +75,7 @@ $(document).ready(function() {
 			path = url;
 		} else if(path.indexOf(ProcessWire.config.ProcessPageEditLink.rootParentUrl) === 0) {
 			// linking to a sibling or other page in same branch (but not a child)
-			var url = path.substring(ProcessWire.config.ProcessPageEditLink.rootParentUrl.length); 
+			url = path.substring(ProcessWire.config.ProcessPageEditLink.rootParentUrl.length); 
 			var url2 = url;
 			url = slashesToRelative(url) + url2; 	
 			path = url;
@@ -79,7 +83,7 @@ $(document).ready(function() {
 		} else if(ProcessWire.config.ProcessPageEditLink.urlType == 2) { // 2=relative for all
 			// page in a different tree than current
 			// traverse back to root
-			var url = ProcessWire.config.ProcessPageEditLink.pageUrl.substring(config.urls.root.length); 
+			url = ProcessWire.config.ProcessPageEditLink.pageUrl.substring(config.urls.root.length); 
 			url = slashesToRelative(url); 
 			path = path.substring(ProcessWire.config.urls.root.length); 
 			path = url + path; 
@@ -94,7 +98,7 @@ $(document).ready(function() {
 			selectedPageData.url = ProcessWire.config.urls.root + data.url.substring(1);
 			selectedPageData.url = absoluteToRelativePath(selectedPageData.url); 
 			$linkPageURL.val(selectedPageData.url).change();
-			if($fileSelect.is(":visible")) populateFileSelect(selectedPageData);
+			populateFileSelect(selectedPageData); // was: if($fileSelect.is(":visible")) { ... }
 		}
 
 		$(this).parents(".InputfieldInteger").children(".InputfieldHeader").click() // to close the field
@@ -177,6 +181,8 @@ $(document).ready(function() {
 		var slashespos = val.indexOf('//');
 		var hasScheme = slashespos > -1 && slashespos < dotpos;
 		var slashpos = (slashespos > -1 ? val.indexOf('/', slashespos + 2) : val.indexOf('/'));
+		var httpHost;
+		var n;
 
 		if(dotpos > -1 && val.indexOf('..') == -1 && val.indexOf('./') == -1 && (
 			(slashpos > dotpos && !hasScheme) ||
@@ -213,7 +219,7 @@ $(document).ready(function() {
 		
 		if(hasScheme) {
 			if (slashpos == -1) slashpos = val.length;
-			var httpHost = (slashespos > -1 ? val.substring(slashespos + 2, slashpos) : val.substring(0, slashpos));
+			httpHost = (slashespos > -1 ? val.substring(slashespos + 2, slashpos) : val.substring(0, slashpos));
 			$this.attr('data-httphost', httpHost);
 		} else {
 			$this.removeAttr('data-httphost'); 
@@ -225,10 +231,10 @@ $(document).ready(function() {
 		}
 
 		var external = false;
-		var httpHost = $this.attr('data-httphost');
+		httpHost = $this.attr('data-httphost');
 		if(httpHost && httpHost.length) {
 			external = true; 
-			for(var n = 0; n < ProcessWire.config.httpHosts; n++) {
+			for(n = 0; n < ProcessWire.config.httpHosts; n++) {
 				if(ProcessWire.config.httpHosts[n] == httpHost) {
 					external = false;
 					break;
@@ -257,8 +263,9 @@ $(document).ready(function() {
 				var extLinkClass = ProcessWire.config.ProcessPageEditLink.extLinkClass;
 				if (extLinkClass.length > 0) {
 					extLinkClass = extLinkClass.split(' ');
-					for (var n = 0; n < extLinkClass.length; n++) {
-						$("#link_class_" + extLinkClass[n]).attr('checked', 'checked');
+					for(n = 0; n < extLinkClass.length; n++) {
+						// $("#link_class_" + extLinkClass[n]).attr('checked', 'checked'); // JQM
+						$("#link_class_" + extLinkClass[n]).prop('checked', true);
 					}
 				}
 			}
@@ -331,5 +338,7 @@ $(document).ready(function() {
 		id: 'PageEditLinkTabs'
 	});
 
-
+	setTimeout(function() {
+		$('#link_page_url_input').focus();
+	}, 250); 
 }); 

@@ -237,13 +237,12 @@ var InputfieldSelector = {
 	 * 
 	 * This function initiates an ajax request to get the operator and value (opval) portion of the row.
 	 * 
-	 * @param $select
-	 * 
 	 */
-	changeField: function($select) {
+	changeField: function() {
 
 		//console.log('changeField'); 
 		var $select = $(this); 
+		var $option = $select.children('option:selected');
 		var field = $select.val();
 		if(!field || field.length == 0) return;
 		if(field == 'toggle-names-labels') return InputfieldSelector.changeFieldToggle($select);
@@ -255,9 +254,9 @@ var InputfieldSelector = {
 		var $hiddenInput = $select.parents('.InputfieldSelector').find('.selector-value'); // .selector-value intentional!
 		var name = $hiddenInput.attr('name'); 
 		var type = $select.attr('data-type'); 
-
+		
 		if(field.match(/\.$/)) {
-			action = 'subfield';
+			action = 'subfield-opval';
 			if(field.indexOf('@') > -1) field = field.substring(1, field.length-1); 
 				else field = field.substring(0, field.length-1); 
 			$row.addClass('has-subfield'); 
@@ -269,31 +268,50 @@ var InputfieldSelector = {
 			$row.children('.subfield').html(''); 
 			$row.removeClass('has-subfield'); 
 		}
+		
+		// subfieldopval action
 
 		var url = './?InputfieldSelector=' + action + '&field=' + field + '&type=' + type + '&name=' + name; 
 		var $spinner = $(InputfieldSelector.spinner); 
 
 		$row.append($spinner); 
-
+		
 		$.get(url, function(data) {	
 			$spinner.remove();
-			var $data = $(data); 
-			$data.hide();
-
-			if(action == 'opval') {
-				var $opval = $row.children('.opval'); 
+			
+			function actionOpval($data) {
+				$data.hide();
+				var $opval = $row.children('.opval');
 				$opval.html('').append($data);
-				$opval.children(':not(.input-or)').fadeIn('fast'); 
+				$opval.children(':not(.input-or)').fadeIn('fast');
 
 				//$data.fadeIn('fast');
 				InputfieldSelector.changeAny($select);
-				var $ac = $opval.find(".input-value-autocomplete"); 
+				var $ac = $opval.find(".input-value-autocomplete");
 				if($ac.length > 0) InputfieldSelector.setupAutocomplete($ac, field, name); 
-			} else {
+			}
+			
+			function actionSubfield($data) {
+				$data.hide();
 				var $subfield = $row.children('.subfield');
-				$subfield.html('').append($data); 
-				$data.fadeIn('fast'); 
+				$subfield.html('').append($data);
+				$data.fadeIn('fast', function() {
+					// if there is a default selected option, select it now
+					//var $option = $subfield.find('.select-subfield-default');
+					//if($option.length) $option.attr('selected', 'selected').parent('select').change();
+				});
 				//$row.children('.subfield').html(data); 	
+			}
+			
+			if(action == 'subfield-opval') {
+				data = data.split('<split>');
+				actionSubfield($(data[0]));
+				actionOpval($(data[1]));
+
+			} else if(action == 'opval') {
+				actionOpval($(data));
+			} else {
+				actionSubfield($(data));
 			}
 
 			InputfieldSelector.normalizeHeightRow($row); 
@@ -429,13 +447,18 @@ var InputfieldSelector = {
 				if(templateID > 0) templateIDs.push(templateID); 
 			}
 
-			if($row.is(".has-subfield")) {
-				var subfield = $row.find(".select-subfield").val();
+			if($row.hasClass('has-subfield')) {
+				var $selectSubfield = $row.find('.select-subfield');
+				var $selectOption = $selectSubfield.children('option:selected');
+				var subfield = $selectSubfield.val();
 				if(subfield.length > 0) { 
 					if(subfield.indexOf('.') > 0) {
 						// fieldName was already specified with subfield
-						if(fieldName.indexOf('@') > -1) fieldName = '@' + subfield; 
-							else fieldName = subfield; 
+						if(fieldName.indexOf('@') > -1) fieldName = '@' + subfield;
+							else fieldName = subfield;
+					} else if($selectOption.hasClass('select-subfield-default')) {
+						// indicates subfield IS the fieldName 
+						fieldName = subfield;
 					} else {
 						// subfield needs to be appended to fieldName
 						fieldName += subfield; 
@@ -449,6 +472,7 @@ var InputfieldSelector = {
 			var op = $op.val(); 
 			var $value = $op.next('.input-value'); 
 			var value = $value.val();
+			var fieldPrefix = '';
 
 			if(op && op.indexOf('"') > -1) {
 				// handle: 'is empty' or 'is not empty' operators
@@ -458,24 +482,33 @@ var InputfieldSelector = {
 				$value.removeAttr('disabled');
 			}
 
+			if(op && op.indexOf('!') === 0 && op !== '!=') {
+				fieldPrefix = '!';
+				op = op.substring(1);
+			}
+			
 			if(typeof value != "undefined") if(value.length) {
 				
 				if($value.hasClass("input-value-subselect") && InputfieldSelector.valueHasOperator(value)) {
 					// value needs to be identified as a sub-selector
 					value = '[' + value + ']';
 
-				} else if(value.indexOf(',') > -1 && fieldName != '_custom') {
+				// } else if(value.indexOf(',') > -1 && fieldName != '_custom') {
+				} else if(fieldName != '_custom' && op.indexOf('"') < 0) {
 					// value needs to be quoted
 					if(value.indexOf('"') > -1) { 
-						if(value.indexOf("'") == -1) value = "'" + value + "'"; 
-							else value = '"' + value.replace(/"/g, '') + '"'; // remove quote
-					} else {
+						if(value.indexOf("'") === -1) {
+							value = "'" + value + "'";
+						} else {
+							value = '"' + value.replace(/"/g, '') + '"'; // remove quote
+						}
+					} else if(!value.match(/^[-_a-zA-Z0-9]*$/)) {
 						value = '"' + value + '"'; 
 					}
 				}
 			}
 
-			var testField = ',' + fieldName + '~' + op + '~'; 
+			var testField = ',' + fieldPrefix + fieldName + '~' + op + '~'; 
 			var testValue = '~' + op + '~' + value + ','; 
 			var mayOrValue = value && value.length > 0 && test.indexOf(testField) > -1; 
 			var mayOrField = value && value.length > 0 && test.indexOf(testValue) > -1; 
@@ -501,6 +534,7 @@ var InputfieldSelector = {
 			}
 
 			selectors[n++] = {
+				not: fieldPrefix === '!',
 				field: fieldName, 
 				operator: op, 
 				value: value,
@@ -510,11 +544,11 @@ var InputfieldSelector = {
 				useOrField: useOrField,
 				isOrGroup: isOrGroup,
 				checkbox: $orCheckbox
-				};
+			};
 
 			if(mayOrField || mayOrValue) showOrNotes = true; 
-			test += ',' + fieldName + '~' + op + '~' + value + ',';
-			selector += ',' + fieldName + op + value; // this gets rebuilt later, but is here for querying
+			test += ',' + fieldPrefix + fieldName + '~' + op + '~' + value + ',';
+			selector += ',' + fieldPrefix + fieldName + op + value; // this gets rebuilt later, but is here for querying
 
 		}); // each row
 
@@ -596,6 +630,7 @@ var InputfieldSelector = {
 					selector += s.field + '="' + $.trim(s.value) + '"';
 				}
 			} else {
+				if(s.not) selector += '!';
 				selector += s.field + s.operator + $.trim(s.value); 
 			}
 		}
@@ -612,7 +647,8 @@ var InputfieldSelector = {
 			}
 			var $counter = $preview.siblings('.selector-counter'); 
 			if($counter.length > 0 && !$counter.is('.selector-counter-disabled')) {
-				$counter.html(InputfieldSelector.spinner).fadeIn('fast'); 
+				$counter.html(InputfieldSelector.spinner).fadeIn('fast');
+				InputfieldSelector.selector = selector;
 				$.post('./?InputfieldSelector=test&name=' + $hiddenInput.attr('name'), { selector: selector }, function(data) {
 					$counter.hide();
 					$counter.html(data); 

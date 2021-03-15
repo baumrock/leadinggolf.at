@@ -4,24 +4,44 @@ require_once(dirname(__FILE__) . '/ProcessPageListRender.php');
 
 /**
  * JSON implementation of the Page List rendering
+ * 
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
+ * https://processwire.com
+ * 
  *
  */
 class ProcessPageListRenderJSON extends ProcessPageListRender {
 
+	/**
+	 * System page IDs used in this class
+	 * 
+	 * @var array
+	 * 
+	 */
 	protected $systemIDs = array();
 
-	public function __construct(Page $page, PageArray $children) {
-
-		parent::__construct($page, $children);
-
+	/**
+	 * Wired to ProcessWire
+	 * 
+	 */
+	public function wired() {
+		$config = $this->config;
 		$this->systemIDs = array(
-			$this->config->http404PageID,
-			$this->config->adminRootPageID,
-			$this->config->trashPageID,
-			$this->config->loginPageID,
+			$config->http404PageID,
+			$config->adminRootPageID,
+			$config->trashPageID,
+			$config->loginPageID,
 		);
+		parent::wired();
 	}
 
+	/**
+	 * Render page/child
+	 * 
+	 * @param Page $page
+	 * @return array
+	 * 
+	 */
 	public function renderChild(Page $page) {
 
 		$outputFormatting = $page->outputFormatting;
@@ -34,9 +54,13 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 
 		if(in_array($page->id, $this->systemIDs)) {
 			$type = 'System';
-			if($page->id == $this->config->http404PageID) $label = $this->_('404 Page Not Found'); // Label for '404 Page Not Found' page in PageList // Overrides page title if used
-			else if($page->id == $this->config->adminRootPageID) $label = $this->_('Admin'); // Label for 'Admin' page in PageList // Overrides page title if used
-			else if($page->id == $this->config->trashPageID && isset($this->actionLabels['trash'])) $label = $this->actionLabels['trash']; // Label for 'Trash' page in PageList // Overrides page title if used
+			if($page->id == $this->config->http404PageID) {
+				$label = $this->_('404 Page Not Found'); // Label for '404 Page Not Found' page in PageList // Overrides page title if used
+			} else if($page->id == $this->config->adminRootPageID) {
+				$label = $this->_('Admin'); // Label for 'Admin' page in PageList // Overrides page title if used
+			} else if($page->id == $this->config->trashPageID && isset($this->actionLabels['trash'])) {
+				$label = $this->actionLabels['trash']; // Label for 'Trash' page in PageList // Overrides page title if used
+			}
 			// if label is not overridden by a language pack, make $label blank to use the page title instead
 			if(in_array($label, array('Trash', 'Admin', '404 Page Not Found'))) $label = '';
 		}
@@ -59,14 +83,32 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 		}
 
 		if($page->id == $this->config->trashPageID) {
-			$note = "&lt; " . $this->_("Trash open: drag pages below here to trash them"); // Message that appears next to the Trash page when open
+			$note = '';
+			if($this->superuser) {
+				$note = "&lt; " . $this->_("Trash open: drag pages below here to trash them"); // Message that appears next to the Trash page when open
+			}
 			$icons = array('trash-o'); // override any other icons
+			$numChildren = $this->numChildren($page, false);
+			if($numChildren > 0 && !$this->superuser) {
+				// manually count quantity that are listable in the trash
+				$numChildren = 0;
+				foreach($page->children("include=all") as $child) {
+					if($child->listable()) $numChildren++;
+				}
+			}
+			if(strpos($this->qtyType, 'total') !== false) {
+				$numTotal = $this->wire('pages')->trasher()->getTrashTotal();
+			} else {
+				$numTotal = $numChildren;
+			}
 		} else {
 			if($page->hasStatus(Page::statusTemp)) $icons[] = 'bolt';
 			if($page->hasStatus(Page::statusLocked)) $icons[] = 'lock';
 			if($page->hasStatus(Page::statusDraft)) $icons[] = 'paperclip';
+			if($page->hasStatus(Page::statusFlagged)) $icons[] = 'exclamation-triangle';
+			$numChildren = $this->numChildren($page, 1);
+			$numTotal = strpos($this->qtyType, 'total') !== false ? $page->numDescendants : $numChildren;
 		}
-
 		if(!$label) $label = $this->getPageLabel($page);
 		
 		if(count($icons)) foreach($icons as $n => $icon) {
@@ -77,7 +119,8 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 			'id' => $page->id,
 			'label' => $label,
 			'status' => $page->status,
-			'numChildren' => $page->numChildren(1),
+			'numChildren' => $numChildren,
+			'numTotal' => $numTotal, 
 			'path' => $page->template->slashUrls || $page->id == 1 ? $page->path() : rtrim($page->path(), '/'),
 			'template' => $page->template->name,
 			//'rm' => $this->superuser && $page->trashable(),
@@ -94,12 +137,19 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 		return $a;
 	}
 
+	/**
+	 * Render page list JSON
+	 * 
+	 * @return string|array
+	 * 
+	 */
 	public function render() {
 
 		$children = array();
-
 		$extraPages = array(); // pages forced to bottom of list
-		$id404 = $this->wire('config')->http404PageID;
+		$config = $this->wire()->config;
+		$idTrash = $config->trashPageID;
+		$id404 = $config->http404PageID;
 
 		foreach($this->children as $page) {
 			if(!$this->superuser && !$page->listable()) continue;
@@ -108,15 +158,23 @@ class ProcessPageListRenderJSON extends ProcessPageListRender {
 				// allow showing 404 page, only if it's editable
 				if(!$page->editable()) continue;
 			} else if(in_array($page->id, $this->systemIDs)) {
-				$extraPages[] = $page;
+				if($this->superuser) $extraPages[$page->id] = $page;
 				continue;
 			}
 
 			$child = $this->renderChild($page);
 			$children[] = $child;
 		}
+	
+		// add in the trash page if not present and allowed
+		if($this->page->id === 1 && !$this->superuser && !isset($extraPages[$idTrash]) && $this->getUseTrash()) {
+			$pageTrash = $this->wire('pages')->get($idTrash);
+			if($pageTrash->id && $pageTrash->listable()) {
+				$extraPages[$pageTrash->id] = $pageTrash;
+			}
+		}
 
-		if($this->superuser) foreach($extraPages as $page) {
+		foreach($extraPages as $page) {
 			$children[] = $this->renderChild($page);
 		}
 

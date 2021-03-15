@@ -9,14 +9,16 @@
 
 .asmOptionDisabled {
 	/* disabled options in new select */
-	color: #999; 
+	color: #999 !important; 
 }
 
 .asmHighlight {
 	/* the highlight span */
 	padding: 0;
-	margin: 0 0 0 1em;
+	margin: 0 0 0 0.5em;
 	display: inline;
+	font-size: smaller;
+	opacity: 0.7;
 }
 
 .asmList {
@@ -146,5 +148,12 @@ span.asmFieldsetIndent {
 .pw-content .asmFieldset,
 #content .asmFieldset {
 	font-weight: bold;
+}
+
+@media screen and (max-width: 767px) {
+	/* do not show asmHighlight elements on small viewports */
+	.asmHighlight {
+		display: none !important;
+	}
 }
 

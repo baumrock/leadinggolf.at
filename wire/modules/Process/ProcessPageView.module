@@ -8,16 +8,16 @@
  * For more details about how Process modules work, please see: 
  * /wire/core/Process.php 
  * 
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
  *
  * @method string execute($internal = true)
  * @method string executeExternal()
- * @method ready()
- * @method finished()
- * @method failed(\Exception $e)
+ * @method ready(array $data = array())
+ * @method finished(array $data = array())
+ * @method failed(\Exception $e, $reason = '', $page = null, $url = '')
  * @method sendFile($page, $basename)
- * @method string pageNotFound($page, $url, $triggerReady = false, $reason = '')
+ * @method string pageNotFound($page, $url, $triggerReady = false, $reason = '', \Exception $e = null)
  *
  */
 class ProcessPageView extends Process {
@@ -113,7 +113,7 @@ class ProcessPageView extends Process {
 		if(empty($this->dirtyURL) && !empty($_SERVER['QUERY_STRING'])) $this->dirtyURL = '?' . $_SERVER['QUERY_STRING'];
 
 		// check if there is an 'it' GET variable present in the request URL query string, which we don't want here
-		if(isset($_GET['it']) && strpos($this->dirtyURL, '?it=') !== false || strpos($this->dirtyURL, '&it=')) {
+		if(isset($_GET['it']) && (strpos($this->dirtyURL, '?it=') !== false || strpos($this->dirtyURL, '&it='))) {
 			// force to use path in request url rather than contents of 'it' var
 			list($it,) = explode('?', $this->dirtyURL);
 			$rootURL = $this->wire('config')->urls->root;
@@ -140,11 +140,15 @@ class ProcessPageView extends Process {
 		$config = $this->config; 
 		$debug = $config->debug; 
 		if($config->usePoweredBy !== null) header('X-Powered-By:' . ($config->usePoweredBy ? ' ProcessWire CMS' : ''));
-		if(is_array($config->pageNumUrlPrefixes)) foreach($config->pageNumUrlPrefixes as $prefix) {
-			$this->pageNumUrlPrefixes[$prefix] = $prefix;
-		}
-		if(!count($this->pageNumUrlPrefixes)) {
-			$prefix = $this->config->pageNumUrlPrefix;
+		
+		$pageNumUrlPrefixes = $config->pageNumUrlPrefixes;
+		if(!is_array($pageNumUrlPrefixes)) $pageNumUrlPrefixes = array();
+		if(count($pageNumUrlPrefixes)) {
+			foreach($pageNumUrlPrefixes as $prefix) {
+				$this->pageNumUrlPrefixes[$prefix] = $prefix;
+			}
+		} else {
+			$prefix = $config->pageNumUrlPrefix;
 			if(strlen($prefix)) $this->pageNumUrlPrefixes[$prefix] = $prefix;
 		}
 
@@ -158,7 +162,9 @@ class ProcessPageView extends Process {
 			$_page = $page;
 			$page = $this->checkAccess($page); 
 			if(!$page || $_page->id == $config->http404PageID) {
-				return $this->pageNotFound($_page, $this->requestURL, true, 'access not allowed');
+				$s = 'access not allowed';
+				$e = new Wire404Exception($s, Wire404Exception::codePermission);
+				return $this->pageNotFound($_page, $this->requestURL, true, $s, $e);
 			}
 			
 			if(!$this->delayRedirects) {
@@ -176,11 +182,11 @@ class ProcessPageView extends Process {
 			}
 
 			try {
-				$this->wire()->setStatus(ProcessWire::statusRender);
 
 				if($this->requestFile) {
-					
+
 					$this->responseType = self::responseTypeFile;
+					$this->wire()->setStatus(ProcessWire::statusDownload, array('downloadFile' => $this->requestFile));
 					$this->sendFile($page, $this->requestFile);
 					
 				} else {
@@ -196,6 +202,8 @@ class ProcessPageView extends Process {
 						}
 						if($contentType) header("Content-Type: $contentType");
 					}
+					
+					$this->wire()->setStatus(ProcessWire::statusRender, array('contentType' => $contentType));
 
 					if($config->ajax) {
 						$this->responseType = self::responseTypeAjax;
@@ -207,11 +215,16 @@ class ProcessPageView extends Process {
 				}
 
 			} catch(Wire404Exception $e) {
-				return $this->pageNotFound($page, $this->requestURL, false, '404 thrown during render');
+				return $this->pageNotFound($page, $this->requestURL, false, '404 thrown during page render', $e);
+			
+			} catch(\Exception $e) {
+				$this->responseType = self::responseTypeError;
+				$this->failed($e, "Thrown during page render", $page); 
+				throw $e; // re-throw non-404 Exceptions
 			}
 
 		} else {
-			return $this->pageNotFound(new NullPage(), $this->requestURL, true, 'requested page resolved to NullPage'); 
+			return $this->pageNotFound(new NullPage(), $this->requestURL, true, 'Requested URL did not resolve to a Page'); 
 		}
 
 		return '';
@@ -234,37 +247,43 @@ class ProcessPageView extends Process {
 		}
 		$this->wire('page', $page);
 		$this->ready();
-		$this->wire()->setStatus(ProcessWire::statusRender);
+		$this->wire()->setStatus(ProcessWire::statusRender, array('contentType' => 'external'));
 		return '';
 	}
 
 	/**
 	 * Hook called when the $page API var is ready, and before the $page is rendered. 
+	 * 
+	 * @param array $data
 	 *
 	 */
-	public function ___ready() { 
-		$this->wire()->setStatus(ProcessWire::statusReady);
+	public function ___ready(array $data = array()) { 
+		$this->wire()->setStatus(ProcessWire::statusReady, $data);
 	}
 
 	/**
 	 * Hook called with the pageview has been finished and output has been sent. Note this is called in /index.php.
+	 * 
+	 * @param array $data
 	 *	
  	 */
-	public function ___finished() { 
-		$this->wire()->setStatus(ProcessWire::statusFinished);
+	public function ___finished(array $data = array()) { 
+		$this->wire()->setStatus(ProcessWire::statusFinished, $data);
 	}
 
 	/**
-	 * Hook called when the pageview failed to finish due to an exception.
+	 * Hook called when the pageview failed to finish due to an Exception or Error.
 	 *
-	 * Sends a copy of the exception that occurred.
+	 * Sends a copy of the throwable that occurred.
 	 * 
-	 * @param \Exception $e
+	 * @param \Throwable $e Exception or Error
+	 * @param string $reason
+	 * @param Page|null $page
+	 * @param string $url
 	 *	
  	 */
-	public function ___failed(\Exception $e) { 
-		if($e) {}
-		$this->wire()->setStatus(ProcessWire::statusFailed);
+	public function ___failed($e, $reason = '', $page = null, $url = '') { 
+		$this->wire()->setStatusFailed($e, $reason, $page, $url); 
 	}
 
 	/**
@@ -277,12 +296,23 @@ class ProcessPageView extends Process {
 
 		/** @var Config $config */
 		$config = $this->wire('config');
+		/** @var Sanitizer $sanitizer */
+		$sanitizer = $this->wire('sanitizer');
+		/** @var Pages $pages */
+		$pages = $this->wire('pages');
 		
 		// force redirect to actual page URL? (if different from request URL)
 		$forceRedirect = false;
 	
 		// did URL end with index.php|htm|html? If so we might redirect if a page matches without it. 
 		$indexRedirect = false;
+		
+		// options for $sanitizer->selectorValue() call		
+		$selectorValueOptions = array(
+			'maxLength' => 2048,
+			'maxBytes' => 6144,
+			'allowArray' => false,
+		);
 		
 		/** @var string $shit Dirty URL */
 		/** @var string $it Clean URL */
@@ -320,7 +350,7 @@ class ProcessPageView extends Process {
 			// sanitized URL does not match requested URL
 			if($config->pageNameCharset == 'UTF8') {
 				// test for extended page name URL
-				$it = $this->wire('sanitizer')->pagePathNameUTF8($shit);
+				$it = $sanitizer->pagePathNameUTF8($shit);
 			}
 			if($shit !== $it) {
 				// if still does not match then fail
@@ -336,15 +366,19 @@ class ProcessPageView extends Process {
 			$indexRedirect = true; 
 		} else if(strpos($this->dirtyURL, 'index.php') !== false && strpos($it, 'index.php') === false) {
 			// if request contains index.php and the $it string does not, make it redirect to correct version
-			$forceRedirect = true; 
+			if(preg_match('!/index\.php$!', parse_url($this->dirtyURL, PHP_URL_PATH))) $forceRedirect = true; 
 		}
 		
 		$numParts = substr_count($it, '/');
 		if($numParts > $config->maxUrlDepth) return null;
 
+		// if($this->isSecurePagefileUrl($it)) { // @todo replace next line with this in 3.0.150
 		if($config->pagefileSecure) {
 			$page = $this->checkRequestFile($it);
-			if(is_object($page)) return $page; // Page or NullPage
+			if(is_object($page)) {
+				$this->responseType = self::responseTypeFile;
+				return $page; // Page or NullPage
+			}
 		}
 
 		// optimization to filter out page numbers first
@@ -361,7 +395,8 @@ class ProcessPageView extends Process {
 			$this->pageNum = (int) $matches[2]; 
 			$page = null;
 		} else { 
-			$page = $this->pages->get("path=$it, status<" . Page::statusMax); 
+			$spit = $sanitizer->selectorValue($it, $selectorValueOptions);
+			$page = $pages->get("path=$spit, status<" . Page::statusMax); 
 		}
 
 		$hasTrailingSlash = substr($it, -1) == '/';
@@ -379,6 +414,20 @@ class ProcessPageView extends Process {
 				}
 			}
 			return $page; 
+		} else {
+			// check for globally unique page which can redirect
+			$trit = trim($it, '/');
+			$spit = $sanitizer->pageNameUTF8($trit);
+			if($trit === $spit) {
+				// one segment off root
+				$spit = $sanitizer->selectorValue($spit, $selectorValueOptions);
+				$page = $pages->get("name=$spit, status=" . Page::statusUnique);
+				if($page->id && $page->viewable()) {
+					$this->redirectURL = $page->url;
+				} else {
+					$page = null;
+				}
+			}
 		}
 
 		$this->requestURL = $it; 
@@ -395,8 +444,8 @@ class ProcessPageView extends Process {
 			$urlSegment = substr($it, $pos);
 			$urlSegments[$cnt] = $urlSegment; 
 			$it = substr($it, 0, $pos); // $it no longer includes the urlSegment
-			$selector = "path=" . $this->wire('sanitizer')->selectorValue($it, 2048) . ", status<" . Page::statusMax;
-			$page = $this->pages->get($selector);
+			$selector = "path=" . $sanitizer->selectorValue($it, $selectorValueOptions) . ", status<" . Page::statusMax;
+			$page = $pages->get($selector);
 			$cnt++; 
 		}
 
@@ -422,7 +471,6 @@ class ProcessPageView extends Process {
 	 * Check if the requested URL is to a secured page file
 	 *
 	 * This function sets $this->requestFile when it finds one.
-	 * This function updates the $it variable when pagefile found.
 	 * Returns Page when a pagefile was found and matched to a page.
 	 * Returns NullPage when request should result in a 404. 
 	 * Returns true, and updates $it, when pagefile was found using old/deprecated method.
@@ -433,20 +481,68 @@ class ProcessPageView extends Process {
 	 *
 	 */
 	protected function checkRequestFile(&$it) {
+	
+		/** @var Config $config */
 		$config = $this->wire('config');
+		/** @var Pages $pages */
+		$pages = $this->wire('pages');
+		
+		// request with url to root (applies only if site runs from subdirectory)
+		$itRoot = rtrim($config->urls->root, '/') . $it;
 
 		// check for secured filename, method 1: actual file URL, minus leading "." or "-"
-		if(strpos(rtrim($config->urls->root, '/') . $it, $config->urls->files) === 0) {
-			if(preg_match('{/([\d\/]+)/([-_.a-zA-Z0-9]+)$}', $it, $matches) && strpos($matches[2], '.')) {
+		if(strpos($itRoot, $config->urls->files) === 0) {
+			// request is for file in site/assets/files/...
+			$idAndFile = substr($itRoot, strlen($config->urls->files));
+			
+			// matching in $idAndFile: 1234/file.jpg, 1/2/3/4/file.jpg, 1234/subdir/file.jpg, 1/2/3/4/subdir/file.jpg, etc. 
+			if(preg_match('{^(\d[\d\/]*)/([-_a-zA-Z0-9][-_./a-zA-Z0-9]+)$}', $idAndFile, $matches) && strpos($matches[2], '.')) {
 				// request is consistent with those that would match to a file
-				$this->requestFile = $matches[2]; 	
-				$idPath = str_replace('/', '', $matches[1]); 
-				$page = $this->pages->get((int) $idPath); // Page or NullPage
-				return $page; 
+				$idPath = trim($matches[1], '/');
+				$file = trim($matches[2], '.');
+				
+				if(!ctype_digit("$idPath")) {
+					// extended paths where id separated by slashes, i.e. 1/2/3/4
+					if($config->pagefileExtendedPaths) {
+						// allow extended paths
+						$idPath = str_replace('/', '', $matches[1]); 
+					} else {
+						// extended paths not allowed
+						return $pages->newNullPage();
+					}
+				}
+				
+				if(strpos($file, '/') !== false) {
+					// file in subdirectory (for instance ProDrafts uses subdirectories for draft files)
+					list($subdir, $file) = explode('/', $file, 2);
+					
+					if(strpos($file, '/') !== false) {
+						// there is more than one subdirectory, which we do not allow
+						return $pages->newNullPage();
+						
+					} else if(strpos($subdir, '.') !== false || strlen($subdir) > 128) {
+						// subdirectory has a "." in it or subdir length is too long
+						return $pages->newNullPage();
+						
+					} else if(!preg_match('/^[a-zA-Z0-9][-_a-zA-Z0-9]+$/', $subdir)) {
+						// subdirectory nat in expected format  
+						return $pages->newNullPage();
+					}
+					
+					$file = trim($file, '.');
+					$this->requestFile = "$subdir/$file";
+					
+				} else {
+					// file without subdirectory
+					$this->requestFile = $file;
+				}
+				
+				return $pages->get((int) $idPath); // Page or NullPage
+				
 			} else {
 				// request was to something in /site/assets/files/ but we don't recognize it
 				// tell caller that this should be a 404
-				return $this->wire('pages')->newNullPage();
+				return $pages->newNullPage();
 			}
 		}
 
@@ -502,7 +598,7 @@ class ProcessPageView extends Process {
 		// now set the URL segments to the $input API variable
 		$cnt = 1; 
 		foreach($urlSegments as $urlSegment) {
-			if($cnt == 1) $page->urlSegment = $urlSegment; // backwards compatibility
+			if($cnt == 1) $page->setQuietly('urlSegment', $urlSegment); // backwards compatibility
 			$this->input->setUrlSegment($cnt, $urlSegment);
 			$cnt++;
 		}
@@ -602,14 +698,26 @@ class ProcessPageView extends Process {
 	 */
 	protected function checkAccess($page) {
 
-		if($page->viewable()) return $page; 
-	
+		$user = $this->wire()->user;
+		
 		if($this->requestFile) {
 			// if a file was requested, we still allow view even if page doesn't have template file
-			// this is something that viewable() does not echeck
-			if($page->editable()) return $page;
+			if($page->viewable(false)) return $page; 
+			// if($page->editable()) return $page;
 			if($this->checkAccessDelegated($page)) return $page; 
-			if($page->status < Page::statusUnpublished && $this->wire('user')->hasPermission('page-view', $page)) return $page;
+			if($page->status < Page::statusUnpublished && $user->hasPermission('page-view', $page)) return $page;
+			
+		} else if($page->viewable()) {
+			return $page;
+			
+		} else if($page->parent_id && $page->parent->template->name === 'admin' && $page->parent->viewable()) {
+			// check for special case in admin when Process::executeSegment() collides with page name underneath
+			// example: a role named "edit" is created and collides with ProcessPageType::executeEdit()
+			$input = $this->wire()->input;
+			if($user->isLoggedin() && $page->editable() && !strlen($input->urlSegmentStr())) {
+				$input->setUrlSegment(1, $page->name);
+				return $page->parent;
+			}
 		}
 
 		$accessTemplate = $page->getAccessTemplate();
@@ -617,7 +725,7 @@ class ProcessPageView extends Process {
 		$requestPage = $page;
 
 		if($redirectLogin) {
-			$config = $this->wire('config');
+			$config = $this->wire()->config;
 			$disallowIDs = array($config->trashPageID); // don't allow login redirect for these pages
 			if($page->id && in_array($page->id, $disallowIDs)) {
 				$page = null;
@@ -633,7 +741,7 @@ class ProcessPageView extends Process {
 			}
 			
 			// in case anything needs to know the originally requested login page
-			$this->wire('session')->setFor('ProcessPageView', 'loginRequestPageID', $requestPage->id);
+			$this->wire()->session->setFor('ProcessPageView', 'loginRequestPageID', $requestPage->id);
 			
 		} else {
 			$page = null;
@@ -662,7 +770,14 @@ class ProcessPageView extends Process {
 			$forPageID = substr($page->parent->name, strrpos($page->parent->name, '-') + 1); // for-page-(id)
 			$forPage = $this->wire('pages')->get((int) $forPageID);
 			// delegate viewable check to the page the repeater lives on
-			if($forPage->id && $forPage->viewable($field)) return $page;
+			if($forPage->id) {
+				if($forPage->viewable($field)) return $page;
+				if(strpos($forPage->template->name, 'repeater_') === 0) {
+					// go recursive for nested repeaters
+					$forPage = $this->checkAccessDelegated($forPage); 	
+					if($forPage && $forPage->id) return $forPage; 
+				}
+			}
 		}
 		return null;
 	}
@@ -677,11 +792,12 @@ class ProcessPageView extends Process {
 	 *
 	 */
 	protected function checkProtocol($page) {
-
-		$requireHTTPS = $page->template->https;
-		if($requireHTTPS == 0) return; // neither HTTP or HTTPS required
-		
+	
+		/** @var Config $config */
 		$config = $this->wire('config');
+		$requireHTTPS = $page->template->https;
+		if($requireHTTPS == 0 || $config->noHTTPS) return; // neither HTTP or HTTPS required
+		
 		$isHTTPS = $config->https; 
 		$scheme = '';
 
@@ -727,7 +843,7 @@ class ProcessPageView extends Process {
 			if($pageNum > 1 && $page->template->allowPageNum) {
 				$prefix = $this->pageNumPrefix ? $this->pageNumPrefix : $this->wire('config')->pageNumUrlPrefix;
 				if(!$prefix) $prefix = 'page';
-				$url .= "$prefix$pageNum";
+				$url = rtrim($url, '/') . "/$prefix$pageNum";
 				if($page->template->slashPageNum) {
 					// defined setting for trailing slash	
 					if($page->template->slashPageNum == 1) $url .= '/';
@@ -757,10 +873,10 @@ class ProcessPageView extends Process {
 
 		// use the static hasPath first to make sure this page actually has a files directory
 		// this ensures one isn't automatically created when we call $page->filesManager->path below
-		if(!PagefilesManager::hasPath($page)) throw new Wire404Exception($err);
+		if(!PagefilesManager::hasPath($page)) throw new Wire404Exception($err, Wire404Exception::codeFile);
 
 		$filename = $page->filesManager->path() . $basename; 
-		if(!is_file($filename)) throw new Wire404Exception($err);
+		if(!is_file($filename)) throw new Wire404Exception($err, Wire404Exception::codeFile);
 
 		if($page->isPublic()) {
 			// deprecated, only necessary for method 2 in checkRequestFile
@@ -781,12 +897,18 @@ class ProcessPageView extends Process {
 	 * @param string $url The URL that the request originated from (like $_SERVER['REQUEST_URI'] but already sanitized)
 	 * @param bool $triggerReady Whether or not the ready() hook should be triggered (default=false)
 	 * @param string $reason Reason why 404 occurred, for debugging purposes (en text)
+	 * @param WireException|Wire404Exception $exception Exception that was thrown or that indicates details of error
 	 * @throws WireException
 	 * @return string
 	 */
-	protected function ___pageNotFound($page, $url, $triggerReady = false, $reason = '') {
-		if($page || $url || $reason) {} // variables provided for hooks only
+	protected function ___pageNotFound($page, $url, $triggerReady = false, $reason = '', $exception = null) {
+		
+		if(!$exception) {
+			// create exception but do not throw
+			$exception = new Wire404Exception($reason, Wire404Exception::codeNonexist); 
+		}
 
+		$this->failed($exception, $reason, $page, $url); 
 		$this->responseType = self::responseTypeError; 
 		$config = $this->config;
 		$this->header404();
@@ -843,6 +965,38 @@ class ProcessPageView extends Process {
 	public function setDelayRedirects($delayRedirects) {
 		$this->delayRedirects = $delayRedirects ? true : false;
 	}
+	
+	/**
+	 * Are secure pagefiles possible on this system and url?
+	 *
+	 * @param string $url
+	 * @return bool
+	 * @todo enable in 3.0.150
+	 *
+	protected function isSecurePagefileUrl($url) {
+		$config = $this->wire('config');
+
+		// if URL does not start from root, prepend root
+		if(strpos($url, $config->urls->root) !== 0) $url = $config->urls->root . ltrim($url, '/');
+
+		// if URL is not pointing to the files structure, then this is not a files URL
+		if(strpos($url, $config->urls->files) !== 0) return false;
+
+		// pagefileSecure option is enabled and URL pointing to files
+		if($config->pagefileSecure) return true;
+	
+		// check if any templates allow pagefileSecure option
+		$allow = false;
+		foreach($this->wire('templates') as $template) {
+			if(!$template->pagefileSecure) continue;
+			$allow = true;
+			break;
+		}
+	
+		// if at least one template supports pagefileSecure option we will return true here
+		return $allow;
+	}
+	*/
 
 }
 

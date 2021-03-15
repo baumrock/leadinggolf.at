@@ -169,6 +169,14 @@ class ProcessPageSearchLive extends Wire {
 			$this->liveSearchDefaults = array_merge($this->liveSearchDefaults, $liveSearch);
 		}
 		
+		$findOperators = Selectors::getOperators(array(
+			'compareType' => Selector::compareTypeFind, 
+			'getIndexType' => 'none',
+			'getValueType' => 'operator',
+		));
+		
+		$this->allowOperators = array_unique(array_merge($this->allowOperators, $findOperators)); 
+		
 		$this->labels = array(
 			'missing-query' => $this->_('No search specified'),
 			'pages' => $this->_('Pages'),
@@ -234,6 +242,8 @@ class ProcessPageSearchLive extends Wire {
 		$user = $this->wire('user');
 		/** @var Languages $languages */
 		$languages = $this->wire('languages');
+		/** @var AdminTheme|AdminThemeFramework $adminTheme */
+		$adminTheme = $this->wire()->adminTheme; 
 
 		$type = isset($presets['type']) ? $presets['type'] : '';
 		$language = isset($presets['language']) ? $presets['language'] : '';
@@ -280,10 +290,13 @@ class ProcessPageSearchLive extends Wire {
 			} else if(strpos($q, '=') !== false) {
 				// regular equals or other w/equals
 				$replaceOperator = '=';
-				if(preg_match('/([%~*^$<>!]{1,2}=)/', $q, $matches)) {
+				$opChars = Selectors::getOperatorChars();
+				if(preg_match('/([' . preg_quote(implode('', $opChars)) . ']{1,3}=)/', $q, $matches)) {
 					if(in_array($matches[1], $this->allowOperators)) {
 						$operator = $matches[1];
 						$replaceOperator = $operator;
+					} else {
+						$q = str_replace($opChars, ' ', $q);
 					}
 				} else {
 					// regular equals, use default operator	
@@ -362,6 +375,9 @@ class ProcessPageSearchLive extends Wire {
 			$selectors[] = implode('|', $this->defaultPageSearchFields) . $operator . $value;
 		}
 
+		$help = strtolower($q) === 'help';
+		if(!$help && $adminTheme && $q === $adminTheme->getLabel('search-help')) $help = true;
+		
 		$liveSearch = array_merge($this->liveSearchDefaults, $presets, array(
 			'type' => $type,
 			'property' => $property,
@@ -373,7 +389,7 @@ class ProcessPageSearchLive extends Wire {
 			'language' => $language, 
 			'start' => $start, 
 			'limit' => $limit,
-			'help' => strtolower($q) === 'help',
+			'help' => $help,
 		));
 		
 		if($this->isViewAll) {
@@ -577,7 +593,7 @@ class ProcessPageSearchLive extends Wire {
 			$order = array_search($thisType, $this->searchTypesOrder);
 			$order = $order * 100;
 			
-			$title = empty($result['title']) ? $info['title'] : $result['title'];
+			$title = empty($result['title']) ? "$info[title]" : "$result[title]";
 			$n = $liveSearch['start'];
 			$item = null;
 			
@@ -591,13 +607,15 @@ class ProcessPageSearchLive extends Wire {
 			foreach($result['items'] as $item) {
 				$n++;
 				$item = array_merge($this->itemTemplate, $item);
+				$item['group'] = empty($item['group']) ? "$title" : "$item[group]";
 				if(empty($item['group'])) $item['group'] = $title;
 				$item['n'] = "$n/$result[total]";
 				$items[$order] = $item;
 				$order++;
 			}
 			
-			if($n && $n < $result['total'] && !$this->isViewAll && !$help) {
+			//if($n && $n < $result['total'] && !$this->isViewAll && !$help) {
+			if($n && $n < $result['total'] && !$help) {
 				$url = isset($result['url']) ? $result['url'] : '';
 				$items[$order] = $this->makeViewAllItem($liveSearch, $thisType, $item['group'], $result['total'], $url); 
 			}
@@ -1110,25 +1128,49 @@ class ProcessPageSearchLive extends Wire {
 	protected function ___renderList(array $items, $prefix = 'pw-search', $class = 'list') {
 
 		$pagination = $this->pagination->renderPager();
-		$a = array();
 		$group = '';
-		
-		$out = "\n<div class='$class'>" . $pagination;
-		
+		$groups = array();
+		$totals = array();
+		$counts = array();
+		$btn = $this->modules->get('InputfieldButton'); /** @var InputfieldButton $btn */
+		$btn->aclass = "$prefix-view-all";
+	
 		foreach($items as $item) {
-			$headline = '';
 			if($item['group'] != $group) {
 				$group = $item['group'];
-				$headline = "<h2>" . $this->wire('sanitizer')->entities($group) . "</h2>";
+				$groups[$group] = ''; 
 			}
-			$a[] = $headline . $this->renderItem($item, $prefix); 
+			$counts[$group] = isset($counts[$group]) ? $counts[$group] + 1 : 1;
+			if(empty($totals[$group]) && isset($item['n'])) {
+				list(, $total) = explode('/', $item['n']);
+				$totals[$group] = (int) $total;
+			}
+			if($item['name'] === 'view-all') {
+				if($pagination) continue;
+				$btn->href = $item['url'];
+				$btn->value = "$item[title] > $group (" . $totals[$group] . ")";
+				$groups[$group] .= $btn->render();
+			} else {
+				$groups[$group] .= $this->renderItem($item, $prefix) . '<hr />';
+			}
 		}
 		
-		$out .= implode('<hr />', $a) . $pagination . "\n</div>";
+		$totalGroups = array();
+		foreach($groups as $group => $content) {
+			$total = empty($totals[$group]) ? $counts[$group] : (int) $totals[$group];
+			$totalGroups["$group ($total)"] = $content;
+			unset($groups[$group]); 
+		}
 		
-		return $out; 
-	}
-
+		$wireTabs = $this->wire('modules')->get('JqueryWireTabs');
+		
+		return
+			"<div class='pw-search-$class'>" . 
+				$pagination . 
+				$wireTabs->render($totalGroups) . 
+				$pagination . 
+			"</div>";
+	} 
 	/**
 	 * Render an item for the “view all” list
 	 * 

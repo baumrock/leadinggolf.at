@@ -6,7 +6,7 @@
  * This file is designed for inclusion by /site/templates/admin.php template and all the variables 
  * it references are from your template namespace. 
  *
- * Copyright 2016 by Ryan Cramer
+ * Copyright 2018 by Ryan Cramer
  * 
  * @var Config $config
  * @var User $user
@@ -55,16 +55,50 @@ function _checkForHttpHostError(Config $config) {
 		$valid = true; 
 	} else if(isset($_SERVER['SERVER_NAME']) && $httpHost === strtolower($_SERVER['SERVER_NAME'])) {
 		$valid = true; 
+	} else if(in_array($httpHost, $config->httpHosts)) {
+		$valid = true; 
 	}
 
 	if(!$valid) $config->error(
 		__('Unrecognized HTTP host:') . "'"  . 
 		htmlentities($_SERVER['HTTP_HOST'], ENT_QUOTES, 'UTF-8') . "' - " . 
 		__('Please update your $config->httpHosts setting in /site/config.php') . " - " . 
-		"<a target='_blank' href='http://processwire.com/api/variables/config/#httphosts'>" . __('read more') . "</a>", 
+		"<a target='_blank' href='https://processwire.com/api/variables/config/#httphosts'>" . __('read more') . "</a>", 
 		Notice::allowMarkup
 		); 
 }
+
+/**
+ * Check if two factor authentication is being required and display warning with link to configure
+ *
+ * @param Session $session
+ *
+ */
+function _checkForTwoFactorAuth(Session $session) {
+	$tfaUrl = $session->getFor('_user', 'requireTfa'); // contains URL to configure TFA
+	if(!$tfaUrl || strpos($tfaUrl, $session->wire('page')->url()) === 0) return;
+	$sanitizer = $session->wire('sanitizer');
+	$session->wire('user')->warning(
+		'<strong>' . $sanitizer->entities1(__('Action required')) . '</strong> ' .
+		wireIconMarkup('angle-right') . ' ' . 
+		"<a href='$tfaUrl'>" . $sanitizer->entities1(__('Enable two-factor authentication')) . " </a>",
+		Notice::allowMarkup
+	);
+}
+
+/**
+ * Check if POST request exceeds PHP’s max_input_vars
+ * 
+ * @param WireInput $input
+ * 
+ */
+function _checkForMaxInputVars(WireInput $input) {
+	$max = (int) ini_get('max_input_vars');
+	if($max && count($_POST) >= $max) {
+		$input->error(sprintf(__('You have reached PHP’s “max_input_vars” setting of %d — please increase it.'), $max)); 
+	}
+}
+
 
 // notify superuser if there is an http host error
 if($user->isSuperuser()) _checkForHttpHostError($config); 
@@ -81,24 +115,30 @@ $breadcrumbs = $wire->wire('breadcrumbs', new Breadcrumbs());
 foreach($page->parents() as $p) {
 	if($p->id > 1) $breadcrumbs->add(new Breadcrumb($p->url, $p->get("title|name"))); 
 }
+
 $controller = null;
 $content = '';
-
+$ajax = $config->ajax;
+$modal = $input->get('modal') ? true : false;
+$demo = $config->demo;
 
 // enable modules to output their own ajax responses if they choose to
-if($config->ajax) ob_start();
+if($ajax) ob_start();
 
 if($page->process && $page->process != 'ProcessPageView') {
 	try {
 
-		if($config->demo && !in_array($page->process, array('ProcessLogin'))) {
+		if($demo && !in_array($page->process, array('ProcessLogin'))) {
 			if(count($_POST)) $wire->error("Features that use POST variables are disabled in this demo"); 
 			foreach($_POST as $k => $v) unset($_POST[$k]); 
 			foreach($_FILES as $k => $v) unset($_FILES[$k]); 
 			$input->post->removeAll();
+		} else if($input->requestMethod('POST') && $user->isLoggedin() && $user->hasPermission('page-edit')) {
+			_checkForMaxInputVars($input);
 		}
 
 		$controller = new ProcessController(); 
+		$wire->wire($controller);
 		$controller->setProcessName($page->process); 
 		$initFile = $config->paths->adminTemplates . 'init.php'; 
 		if(is_file($initFile)) {
@@ -109,14 +149,19 @@ if($page->process && $page->process != 'ProcessPageView') {
 			/** @noinspection PhpIncludeInspection */
 			include_once($initFile);
 		}
-		if($input->get('modal')) $session->addHookBefore('redirect', null, '_hookSessionRedirectModal'); 
+		if($modal) $session->addHookBefore('redirect', null, '_hookSessionRedirectModal'); 
 		$content = $controller->execute();
 		$process = $controller->wire('process');
+		
+		if(!$ajax && !$modal && !$demo && $user->isLoggedin()) _checkForTwoFactorAuth($session);
+		if($process) {} // ignore
 
 	} catch(Wire404Exception $e) {
+		$wire->setStatusFailed($e, "404 from $page->process", $page);
 		$wire->error($e->getMessage()); 
 
 	} catch(WirePermissionException $e) {
+		$wire->setStatusFailed($e, "Permission error from $page->process", $page); 
 
 		if($controller && $controller->isAjax()) {
 			$content = $controller->jsonMessage($e->getMessage(), true); 
@@ -130,6 +175,7 @@ if($page->process && $page->process != 'ProcessPageView') {
 		}
 
 	} catch(\Exception $e) {
+		$wire->setStatusFailed($e, "Error from $page->process", $page); 
 		$msg = $e->getMessage(); 
 		if($config->debug) {
 			$msg = $sanitizer->entities($msg);
@@ -154,13 +200,14 @@ if($page->process && $page->process != 'ProcessPageView') {
 	$content = '<p>' . __('This page has no process assigned.') . '</p>';
 }
 
-if($config->ajax) {
+if($ajax) {
 	// enable modules to output their own ajax responses if they choose to
 	if(!$content) $content = ob_get_contents();
 	ob_end_clean();
 }
 
-$config->js(array('httpHost', 'httpHosts'), true); 
+// config properties that should be mirrored to ProcessWire.config.property in JS
+$config->js(array('httpHost', 'httpHosts', 'https'), true); 
 
 if($controller && $controller->isAjax()) {
 	if(empty($content) && count($notices)) $content = $controller->jsonMessage($notices->last()->text); 
@@ -175,5 +222,6 @@ if($controller && $controller->isAjax()) {
 	/** @noinspection PhpIncludeInspection */
 	require($adminThemeFile);
 	$session->removeNotices();
+	if($content) {} // ignore
 }
 

@@ -25,7 +25,7 @@
 	#ProcessListerTable table.ProcessListerTable {
 		
 		clear: both;
-		position: relative;
+		// position: relative;
 		margin-top: 0;
 		
 		td table {
@@ -42,6 +42,7 @@
 			}
 			th strong {
 				// icon + first word of label 
+				font-weight: inherit;
 				white-space: nowrap;
 			}
 			th b,
@@ -201,19 +202,30 @@
 #ProcessListerSelector {
 	display: inline-block;
 }
+#ProcessListerResultNotes + #ProcessListerSelector {
+	margin-top: 0;
+}
 
 p.version {
 	clear: both; 
-	//padding-top: 1em; 
+	padding-top: 1em; 
 }
 
 #ProcessListerScript {
 	display: none;
 }
 
-#table_bookmarks {
-	margin-top: 0.5em;
+#tab_bookmarks {
+	table tr {
+		> td:first-child {
+			width: 30%;
+		}
+		> td:nth-child(2) {
+			width: 40%;
+		}
+	}
 }
+
 
 .AdminThemeReno {
 	a.lister-lightbox {
@@ -224,6 +236,31 @@ p.version {
 	}
 	#content .lister_headline {
 		margin-top: 0.5em;
+	}
+}
+
+/**
+ * Styles specific to files and images
+ * 
+ */
+#ProcessListerTable {
+	.InputfieldFile,
+	.InputfieldImage {
+		.InputfieldContent,
+		.InputfieldHeader {
+			background: inherit;
+		}
+		.InputfieldHeader {
+			padding-left: 0;
+			padding-right: 0;
+			padding-top: 0;
+		}
+		.gridImage__tooltip {
+			table th,
+			table td {
+				padding: 0;
+			}
+		}
 	}
 }
 

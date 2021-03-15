@@ -5,7 +5,7 @@ $(document).ready(function() {
 	}; 
 	$("#templates_id").change(fieldFilterFormChange); 
 	$("#fieldtype").change(fieldFilterFormChange); 
-	$("#show_system").click(fieldFilterFormChange); 
+	$("#wrap_show_system input").click(fieldFilterFormChange); 
 
 	var $asmListItemStatus = $("#asmListItemStatus"); 
 	
@@ -45,7 +45,7 @@ $(document).ready(function() {
 			value: parseInt($columnWidth.val()),
 			slide: function(e, ui) {
 				var val = ui.value + '%';
-				$columnWidth.val(val); 
+				$columnWidth.val(val).trigger('change');
 				setAsmListItemStatus();
 			}
 		});
@@ -65,7 +65,7 @@ $(document).ready(function() {
 
 	// instantiate the WireTabs
 	var $fieldEdit = $("#ProcessFieldEdit"); 
-	if($fieldEdit.size() > 0 && $('li.WireTab').size() > 1) {
+	if($fieldEdit.length > 0 && $('li.WireTab').length > 1) {
 		$fieldEdit.find('script').remove();
 		$fieldEdit.WireTabs({
 			items: $(".Inputfields li.WireTab"),
@@ -108,7 +108,8 @@ $(document).ready(function() {
 	// setup access control tab
 	$("#viewRoles_37").click(function() {
 		// if guest has view, then all have view
-		if($(this).is(":checked")) $("input.viewRoles").attr('checked', 'checked');
+		// if($(this).is(":checked")) $("input.viewRoles").attr('checked', 'checked'); // JQM
+		if($(this).is(":checked")) $("input.viewRoles").prop('checked', true);
 	});
 	$("input.viewRoles:not(#viewRoles_37)").click(function() {
 		// prevent unchecking 'view' for other roles when 'guest' role is checked
@@ -118,7 +119,8 @@ $(document).ready(function() {
 	$("input.editRoles:not(:disabled)").click(function() {
 		if($(this).is(":checked")) {
 			// if editable is checked, then viewable must also be checked
-			$(this).closest('tr').find("input.viewRoles").attr('checked', 'checked'); 
+			// $(this).closest('tr').find("input.viewRoles").attr('checked', 'checked'); // JQM
+			$(this).closest('tr').find("input.viewRoles").prop('checked', true); 
 		}
 	}); 
 
@@ -126,14 +128,22 @@ $(document).ready(function() {
 	$(".override-select-all").click(function() {
 		var $checkboxes = $(this).closest('table').find("input[type=checkbox]");
 		if($(this).hasClass('override-checked')) {
-			$checkboxes.removeAttr('checked');
+			// $checkboxes.removeAttr('checked'); // JQM
+			$checkboxes.prop('checked', false);
 			$(this).removeClass('override-checked'); 
 		} else {
-			$checkboxes.attr('checked', 'checked');
+			// $checkboxes.attr('checked', 'checked'); // JQM
+			$checkboxes.prop('checked', true);
 			$(this).addClass('override-checked');
 		}
 		return false;
 	});
+
+	// update overrides table if anything was changed in a modal
+	$(document).on('pw-modal-closed', 'a', function(e, ui) {
+		if(!$('#tab-overrides').is(':visible')) return;
+		Inputfields.reload('#Inputfield_overrides_table');
+	}); 
 
 
 });

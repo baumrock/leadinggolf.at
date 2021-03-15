@@ -56,7 +56,17 @@ class MarkupFieldtype extends WireData implements Module {
 	 * @var bool
 	 * 
 	 */
-	protected $renderIsUseless = false; 
+	protected $renderIsUseless = false;
+
+	/**
+	 * Properties that are potentially linkable to source page in markup
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $linkableProperties = array(
+		'name', 'url', 'httpUrl', 'path', 'title',
+	);
 
 	/**
 	 * Construct the MarkupFieldtype
@@ -102,7 +112,22 @@ class MarkupFieldtype extends WireData implements Module {
 				$valid = false;
 				if($value instanceof PageArray) {
 					// PageArray object: get array of property value from each item
-					$value = $value->explode($property, array('getMethod' => 'getFormatted'));
+					$field = $this->wire('fields')->get($property);
+					if(is_object($field) && $field->type) {
+						$a = array();
+						foreach($value as $page) {
+							$v = $page->getFormatted($property);
+							$v = $field->type->markupValue($page, $field, $v);
+							if($this->isLinkablePageProperty($page, $property)) {
+								$a[] = "<a href='$page->url'>$v</a>";
+							} else {
+								$a[] = $v;
+							}
+						}
+						return $this->arrayToString($a, false);
+					} else {
+						$value = $value->explode($property, array('getMethod' => 'getFormatted'));
+					}
 					$valid = true;
 					
 				} else if($value instanceof WireArray) {
@@ -118,7 +143,7 @@ class MarkupFieldtype extends WireData implements Module {
 					if(is_object($field) && $field->type) return $field->type->markupValue($page, $field, $value);
 					$valid = true;
 				} else if($value instanceof LanguagesValueInterface) {
-					/** @var LanguaagesValueInterface $value */
+					/** @var LanguagesValueInterface $value */
 					/** @var Languages $languages */
 					$languages = $this->wire('languages');
 					if($property) {
@@ -126,8 +151,10 @@ class MarkupFieldtype extends WireData implements Module {
 							$languageID = $languages->getDefault()->id;	
 						} else if(is_string($property) && preg_match('/^data(\d+)$/', $property, $matches)) {
 							$languageID = (int) $matches[1];
+						} else {
+							$languageID = 0;
 						}
-						$value = $value->getLanguageValue($languageID); 
+						$value = $languageID ? $value->getLanguageValue($languageID) : (string) $value; 
 					} else {
 						$value = (string) $value;
 					}
@@ -236,10 +263,11 @@ class MarkupFieldtype extends WireData implements Module {
 	 * Convert any value to a string
 	 * 
 	 * @param mixed $value
+	 * @param bool $encode
 	 * @return string
 	 * 
 	 */	
-	protected function valueToString($value) {
+	protected function valueToString($value, $encode = true) {
 		if(is_object($value) && ($value instanceof Pagefiles || $value instanceof Pagefile)) {
 			return $this->objectToString($value);
 		} else if(WireArray::iterable($value)) {
@@ -247,7 +275,7 @@ class MarkupFieldtype extends WireData implements Module {
 		} else if(is_object($value)) {
 			return $this->objectToString($value);
 		} else {
-			return $this->wire('sanitizer')->entities1($value);
+			return $encode ? $this->wire('sanitizer')->entities1($value) : $value;
 		}
 	}
 
@@ -255,14 +283,15 @@ class MarkupFieldtype extends WireData implements Module {
 	 * Render an unknown array or WireArray to a string
 	 * 
 	 * @param array|WireArray $value
+	 * @param bool $encode
 	 * @return string
 	 * 
 	 */
-	protected function arrayToString($value) {
+	protected function arrayToString($value, $encode = true) {
 		if(!count($value)) return '';
 		$out = "<ul class='MarkupFieldtype'>";
 		foreach($value as $v) {
-			$out .= "<li>" . $this->valueToString($v) . "</li>";
+			$out .= "<li>" . $this->valueToString($v, $encode) . "</li>";
 		}
 		$out .= "</ul>";
 		return $out; 
@@ -276,8 +305,16 @@ class MarkupFieldtype extends WireData implements Module {
 	 * 
 	 */
 	protected function objectToString($value) {
-		if($value instanceof WireArray && !$value->count()) return '';
-		if($value instanceof Page) return $value->get('title|name');
+		if($value instanceof WireArray) { 
+			if(!$value->count()) return '';
+		}
+		if($value instanceof Page) {
+			if($value->viewable()) {
+				return "<a href='$value->url'>" . $value->get('title|name') . "</a>";
+			} else {
+				return $value->get('title|name');
+			}
+		}
 		if($value instanceof Pagefiles || $value instanceof Pagefile) {
 			$out = $this->renderInputfieldValue($value);
 		} else {
@@ -327,6 +364,20 @@ class MarkupFieldtype extends WireData implements Module {
 			$out = $wrapper->renderValue();
 		}
 		return $out; 	
+	}
+
+	/**
+	 * Is the given page property/field name one that should be linked to the source page in output?
+	 * 
+	 * @param Page $page
+	 * @param $property
+	 * @return bool
+	 * 
+	 */
+	protected function isLinkablePageProperty(Page $page, $property) {
+		if(!in_array($property, $this->linkableProperties)) return false;
+		if(!$page->viewable($property)) return false;
+		return true;
 	}
 
 	/**

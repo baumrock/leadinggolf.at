@@ -10,7 +10,7 @@
  *
  * Provides an alternative listing view for pages using specific templates. 
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
  * https://processwire.com
  *
  * For support of actions, new edit modules, and custom configurable Listers, 
@@ -60,12 +60,19 @@
  * @property string $blankLabel Label when a field is blank (default=Blank)
  * @property int $editOption Edit option setting, used only by ListerPro
  * @property bool $responsiveTable Whether or not Lister table should be responsive rather than horiz scroll
+ * @property bool $configMode Configuration mode where some limits are removed (default=false)
  * 
  * @method string buildListerTableColActions(Page $p, $value)
  * @method string renderResults($selector = null)
  * @method string getSelector($limit = null)
  * @method PageArray findResults($selector)
  * @method string executeReset()
+ * @method string executeEditBookmark()
+ * @method string executeViewport() ListerPro
+ * @method string executeConfig() ListerPro
+ * @method string executeActions() ListerPro
+ * @method string executeSave() ListerPro
+ * @method string renderedExtras($markup) #pw-hooker
  * 
  * 
  * @todo make system fields hookable for output like markupValue is for custom fields
@@ -132,6 +139,14 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	protected $finalSelector = '';
 
 	/**
+	 * Final selector string after being fully parsed by PageFinder (used only in debug mode)
+	 * 
+	 * @var string
+	 * 
+	 */
+	protected $finalSelectorParsed = '';
+
+	/**
 	 * IDs of pages that should appear open automatically
 	 * 
 	 * May be set by GET variable 'open' or by openPageIDs setting. 
@@ -140,10 +155,27 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	protected $openPageIDs = array();
 
 	/**
+	 * Additional notes about the results to display underneath them
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $resultNotes = array();
+
+	/**
+	 * Render results during this request?
+	 * 
+	 * @var bool
+	 * 
+	 */
+	protected $renderResults = false;
+
+	/**
 	 * Initalize module config variables
 	 *
 	 */
 	public function __construct() {
+		parent::__construct();
 		if(!$this->wire('page')) return;
 
 		$this->defaultColumns = array('title', 'template', 'parent', 'modified', 'modified_users_id'); 
@@ -249,6 +281,9 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 		// whether or not table collapses (rather than horiz scroll) at lower resolutions
 		$this->set('responsiveTable', true);
 	
+		// configuration mode where some limits are removed
+		$this->set('configMode', false);
+	
 		$idLabel = $this->_('ID');
 		$pathLabel = $this->_('Path');
 		$nameLabel = $this->_('Name'); 
@@ -256,7 +291,7 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 		$modifiedLabel = $this->_('Modified');
 		$publishedLabel = $this->_('Published'); 
 		$modifiedUserLabel = $this->_('Mod By'); 
-		$createdUserLabel = $this->_('Created By'); 
+		$createdUserLabel = $this->_('Created By');
 		$templateLabel = $this->_('Template'); 
 		$statusLabel = $this->_('Status'); 
 		$parentLabel = $this->_('Parent'); 
@@ -269,13 +304,15 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 			'status' => $statusLabel, 
 			'template' => $templateLabel,
 			'templates_id' => $templateLabel . ' ' . $idLabel,
-			'modified' => $modifiedLabel,	
+			'modified' => $modifiedLabel,
 			'created' => $createdLabel,
 			'published' => $publishedLabel, 
 			'modified_users_id' => $modifiedUserLabel, 
 			'created_users_id' => $createdUserLabel,
 			'parent' => $parentLabel,
 			'num_children' => $this->_('Num Children'),
+			'url' => 'URL', 
+			'httpUrl' => 'Http URL',
 			));
 
 		$this->statusLabels = array(
@@ -307,11 +344,18 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	public function init() {
 		if(!$this->wire('page')) return;
 		
+		/** @var WireInput $input */
+		$input = $this->wire('input');
+		
 		$this->checkSessionBookmark();
 		
 		$columns = $this->sessionGet('columns'); 
 		if($columns) $this->columns = $columns; 
 		$ajax = $this->wire('config')->ajax;
+		
+		$this->renderResults = $ajax && $input->post('render_results') > 0;
+		
+		if($this->renderResults) $this->processInput();
 
 		if(!$this->template) {
 			$selector = $this->initSelector;
@@ -323,14 +367,12 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 			if(count($template)) $this->set('template', reset($template));
 		}
 
-		if($this->wire('input')->post('reset_total')) {
+		if($input->post('reset_total')) {
 			$this->sessionSet('knownTotal', null);
 		} else {
 			$knownTotal = $this->sessionGet('knownTotal');
 			if(is_array($knownTotal)) $this->knownTotal = $knownTotal;
 		}
-
-		if(count($_POST)) $this->processInput();
 
 		parent::init();
 	}
@@ -338,35 +380,25 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	/**
 	 * Check for a bookmark specified in GET variable $n
 	 * 
-	 * return null|int|bool Returns NULL if not applicable, boolean false if bookmark not found, or integer of bookmark ID if applied
+	 * @param string $bookmarkID 
+	 * @return null|int|bool Returns NULL if not applicable, boolean false if bookmark not found, or integer of bookmark ID if applied
 	 * 
 	 */
-	public function checkBookmark() {
-		$n = (int) $this->wire('input')->get('bookmark');
-		if(!$n) return null;
-		$bookmarks = $this->getBookmarksInstance()->getBookmarks();
-		if(!isset($bookmarks[$n])) return false;
-		$bookmark = $bookmarks[$n];
-		$user = $this->wire('user');
-		if(!$user->isSuperuser() && count($bookmark['roles'])) {
-			$allow = false;
-			foreach($bookmark['roles'] as $roleID) {
-				foreach($user->roles as $role) {
-					if($role->id == $roleID) {
-						$allow = true;
-						break;
-					}
-				}
-			}
-			if(!$allow) return false;
-		}
+	public function checkBookmark($bookmarkID = '') {
+		if(!$bookmarkID) $bookmarkID = $this->wire('input')->get('bookmark');
+		if(!$bookmarkID) return null;
+		$bookmarks = $this->getBookmarksInstance();
+		$bookmarkID = $bookmarks->_bookmarkID($bookmarkID);
+		if(!$bookmarkID) return false;
+		$bookmark = $bookmarks->getBookmark($bookmarkID); 
+		if(!$bookmark || !$bookmarks->isBookmarkViewable($bookmark)) return false;
 		$this->sessionClear();
 		$this->set('defaultSelector', $bookmark['selector']);
 		$this->set('defaultSort', $bookmark['sort']);
 		$this->sessionSet('sort', $bookmark['sort']);
 		$this->set('columns', $bookmark['columns']);
-		
-		return $n;
+		$this->headline($this->wire('page')->title . ' - ' . $bookmark['title']);
+		return $bookmarkID;
 	}
 	
 	/**
@@ -503,33 +535,54 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 			return $this; 
 		} else if($key == 'parent' && !$value instanceof Page) {
 			$value = $this->wire('pages')->get($value); 
+		} else if($key === 'finalSelector') {
+			$this->finalSelector = $value;
 		}
 		return parent::set($key, $value);
 	}
 
 	/**
+	 * Get a Lister setting
+	 * 
+	 * @param string $key
+	 * @return mixed|string
+	 * 
+	 */
+	public function get($key) {
+		if($key === 'finalSelector') return $this->finalSelector;
+		return parent::get($key);
+	}
+
+
+	/**
 	 * Set a Lister session variable
 	 *
 	 * @param string $key
-	 * @param string|int $value
+	 * @param string|int|array $value
 	 *
 	 */
 	public function sessionSet($key, $value) {
 		$key = $this->page->name . '_lister_' . $key;
-		if(is_null($value)) $this->session->remove($key);
-			else $this->session->set($key, $value);
+		if(is_null($value)) {
+			$this->session->remove($key);
+		} else {
+			$this->session->set($key, $value);
+		}
 	}
 
 	/**
 	 * Get a Lister session variable
 	 *
 	 * @param string $key
-	 * @return string|int|null
+	 * @param array|string|int $fallback Optional fallback value if session value not present
+	 * @return string|int|array|null
 	 *
 	 */
-	public function sessionGet($key) {
+	public function sessionGet($key, $fallback = null) {
 		$key = $this->page->name . '_lister_' . $key;
-		return $this->session->get($key); 
+		$value = $this->session->get($key); 
+		if($value === null && $fallback !== null) $value = $fallback;
+		return $value;
 	}
 
 	/**
@@ -550,7 +603,8 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	 */
 	protected function processInput() {
 
-		if($this->input->post('filters') !== null) {
+		$filters = $this->input->post('filters');
+		if($filters !== null && $filters !== 'ignore') {
 			$is = $this->getInputfieldSelector();
 			$is->processInput($this->input->post); 
 			$selector = $this->sessionGet("selector"); 
@@ -559,12 +613,11 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 				$this->sessionSet("pageNum", 1); 
 				$this->wire('input')->setPageNum(1);
 			}
-			
 		} 
 
 		if($this->input->post('columns') !== null && !in_array('disableColumns', $this->toggles)) { 
 			$columns = array();
-			foreach($this->input->post('columns') as $name) {
+			foreach($this->input->post->array('columns') as $name) {
 				$name = $this->wire('sanitizer')->name($name); 	
 				$columns[] = $name; 
 			}
@@ -589,11 +642,16 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	public function buildColumnsField() {
 
 		$fields = $this->wire('fields');
-		$systemFields = $this->getSystemColumns();
+		$systemColumns = $this->getSystemColumns();
 		$useLabels = $this->useColumnLabels;
 		$systemLabels = $this->getSystemLabels();
 		$template = $this->template;
 		$customFields = array();
+		$languages = $this->wire('languages'); /** @var Languages $languages */
+		$modules = $this->wire('modules'); /** @var @var Modules $modules */
+		$languagePageNames = $languages && $modules->isInstalled('LanguageSupportPageNames') && method_exists($this, '___executeSave'); 
+		$asmParents = array('name', 'path', 'url', 'httpUrl');
+		$asmParentValueSuffix = ' …';
 		
 		/** @var InputfieldAsmSelect $f */
 		$f = $this->modules->get('InputfieldAsmSelect'); 
@@ -604,16 +662,55 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 		$f->icon = 'table';
 	
 		// system fields
-		foreach($systemFields as $field) {
+		foreach($systemColumns as $field) {
+			
 			$label = isset($systemLabels[$field]) ? $systemLabels[$field] : $field;
+			$isAsmParent = $languagePageNames && in_array($field, $asmParents);
+			
 			if($useLabels) {
-				$f->addOption($field, $label, array('data-desc' => $field));
+				$label1 = $label;
+				$label2 = $field;
 			} else {
-				$f->addOption($field, $field, array('data-desc' => $label));
+				$label1 = $field;
+				$label2 = $label;
+			}
+			
+			$attrs = array();
+			
+			if($isAsmParent) {
+				$asmParentValue = $field . $asmParentValueSuffix;
+				$value = $asmParentValue;
+				$attrs['class'] = 'asmParent';
+				$label1 .= " $asmParentValueSuffix";
+				$label2 .= " $asmParentValueSuffix";
+				
+			} else {
+				$value = $field;
+			}
+			
+			$attrs['data-desc'] = $label2;
+			
+			$f->addOption($value, $label1, $attrs);
+			
+			if($languagePageNames && $isAsmParent) {
+				$f->addOption("$field", ($useLabels ? $label : $value), array(
+					'data-desc' => ($useLabels ? $value : $label),
+					'data-asmParent' => $value,
+					'class' => 'asmChild',
+				));
+				foreach($languages as $language) {
+					$langLabel = $this->addLanguageLabel($label, $language, true); 
+					$langValue = "$field-$language->name";
+					$f->addOption($langValue, ($useLabels ? $langLabel : $langValue), array(
+						'data-desc' => ($useLabels ? $langValue : $langLabel),
+						'data-asmParent' => $value,
+						'class' => 'asmChild',
+					));
+				}
 			}
 		}
 		
-		$f->addOption('-', '———'); 
+		$f->addOption('-', '———', array('disabled' => 'disabled')); 
 	
 		// custom fields (sort)
 		foreach($fields as $field) {
@@ -635,21 +732,24 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	
 		// custom fields (add)
 		foreach($customFields as $field) {
+			
 			if($template) {
 				$_field = $template->fieldgroup->getField($field->name, true); // context
 				if($_field) $field = $_field;
 			}
+			
 			if($useLabels) {
 				$label = $field->getLabel();
 				$desc = $field->name;
-				$f->addOption($field->name, $field->getLabel(), array('data-desc' => $field->name));
 			} else {
 				$label = $field->name;
 				$desc = $field->getLabel();
 			}
+			
 			$attr = array('data-desc' => $desc);
 			$icon = $field->getIcon(true);
 			if($icon) $attr['data-handle'] = wireIconMarkup($icon, 'fw');
+			
 			$f->addOption($field->name, $label, $attr);
 		}
 		
@@ -664,7 +764,8 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	 */
 	protected function getSystemColumns() {
 		$systemColumns = array_keys($this->systemLabels); 
-		$systemColumns = array_merge($systemColumns, array('id', 'name', 'path')); 
+		$systemColumns = array_merge($systemColumns, array('id', 'name', 'path', 'url', 'httpUrl')); 
+		sort($systemColumns);
 		return $systemColumns; 
 	}
 
@@ -693,7 +794,7 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	protected function allowColumnField(Field $field) {
 	
 		if(in_array($field->name, $this->disallowColumns)) return false;
-		if(count($this->limitFields) && !in_array($field->name, $this->limitFields)) {
+		if(count($this->limitFields) && !$this->configMode && !in_array($field->name, $this->limitFields)) {
 			if(!in_array($field->name, $this->columns)) return false;
 		}
 		if($field->type instanceof FieldtypeFieldsetOpen) return false;
@@ -901,8 +1002,14 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	 *
 	 */
 	protected function validateSelector($selector) {
-		
+	
+		/** @var User $user */
 		$user = $this->wire('user');
+		/** @var Sanitizer $sanitizer */
+		$sanitizer = $this->wire('sanitizer');
+		/** @var Pages $pages */
+		$pages = $this->wire('pages');
+		
 		$showIncludeWarnings = $this->showIncludeWarnings; // whether to show warning message about removed include modes
 		
 		if($user->isSuperuser()) {
@@ -922,6 +1029,7 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 		/** @var Selectors $selectors */
 		$selectors = $this->wire(new Selectors($selector));
 		$templates = array();
+		$parents = array();
 		$changed = false;
 		$templateSelector = null;
 		$includeSelector = null;
@@ -934,6 +1042,8 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 			foreach($fields as $key => $name) {
 				$fields[$key] = strtolower($name); 
 			}
+			
+			$firstField = reset($fields);
 			
 			if(in_array('check_access', $fields) || in_array('checkaccess', $fields)) {
 				if(!$this->allowIncludeAll) { 
@@ -948,7 +1058,7 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 				
 				foreach($values as $key => $value) {
 					
-					$value = $this->wire('sanitizer')->templateName($value); 
+					$value = $sanitizer->templateName($value); 
 					if(ctype_digit("$value")) $value = (int) $value;
 					$template = $this->wire('templates')->get($value); 	
 					
@@ -971,7 +1081,19 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 					}
 				}
 				$templateSelector = $s; 
+				
 			} 
+			
+			if(($firstField === 'parent' || $firstField === 'parent.id') && count($fields) == 1) {
+				foreach($values as $value) {
+					if(ctype_digit("$value")) {
+						$parent = $pages->get((int) $value);
+					} else {
+						$parent = $pages->get($sanitizer->selectorValue($value));
+					}
+					if($parent->id) $parents[] = $parent;
+				}
+			}
 			
 			if(in_array('include', $fields)) {
 				
@@ -984,12 +1106,18 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 						// ok, override
 					} else { 
 						$selectors->remove($s);
-						if($value && $showIncludeWarnings) $this->error($this->_("Specified 'include=' mode is not allowed here.")); 
+						if($value && $showIncludeWarnings) {
+							$this->resultNotes[] = $this->_("Specified 'include=' mode is not allowed here.") . " (include=$value)";
+						}
 						$changed = true; 
 					}
 				}
 				
 			}
+		}
+		
+		if($templateSelector) {
+			// not currently used
 		}
 		
 		if($includeSelector) {
@@ -999,18 +1127,33 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 				// user specified 1 or more templates
 				$numEditable = 0;
 				// determine how many templates are editable
-				$test = $this->wire('pages')->newPage();
-				foreach($templates as $template) {
-					$test->template = $template;
-					$test->id = 999; // required (any ID number works)
-					if($test->editable()) $numEditable++;
+				if(count($parents)) {
+					foreach($templates as $template) {
+						$test = $pages->newPage($template);
+						$test->id = 999; // required (any ID number works)
+						foreach($parents as $parent) {
+							$test->parent = $parent;
+							if($test->editable()) {
+								$numEditable++;
+								break;
+							}
+						}
+					}
+				} else {
+					foreach($templates as $template) {
+						$test = $pages->newPage($template);
+						$test->id = 999; // required (any ID number works)
+						if($test->editable()) $numEditable++;
+					}
 				}
 				// if all specified templates are editable, include=unpublished is allowed
 				if($numEditable == count($templates)) {
 					// include=unpublished is allowed
 				} else if($includeMode == 'unpublished') {
 					// include=unpublished is not allowed
-					if($showIncludeWarnings) $this->error($this->_("Not all specified templates are editable. Only 'include=hidden' is allowed")); 
+					if($showIncludeWarnings) {
+						$this->resultNotes[] = $this->_("Not all specified templates are editable. Only 'include=hidden' is allowed");
+					}
 					$includeSelector->value = 'hidden';
 					$changed = true; 
 				}
@@ -1020,7 +1163,9 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 				// only allow a max include mode of hidden
 				// regardless of edit access
 				if($includeMode != 'hidden') {
-					if($showIncludeWarnings) $this->error($this->_("No templates specified so 'include=hidden' is max allowed include mode"));
+					if($showIncludeWarnings) {
+						$this->resultNotes[] = $this->_("No templates specified so 'include=hidden' is max allowed include mode");
+					}
 					$includeSelector->value = 'hidden';
 					$changed = true; 
 				}
@@ -1062,6 +1207,23 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	}
 
 	/**
+	 * Append a language label to given $label and return it
+	 * 
+	 * @param string $label
+	 * @param Language$language
+	 * @param bool $showDefault
+	 * @return string
+	 * 
+	 */
+	protected function addLanguageLabel($label, $language, $showDefault = false) {
+		if(!$language) return $label;
+		if($showDefault || !$language->isDefault()) {
+			$label .= ' (' . $language->get('name') . ')';
+		}
+		return $label;
+	}
+
+	/**
 	 * Build the Lister table containing results
 	 *
 	 * @param PageArray $results
@@ -1070,20 +1232,28 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	 */
 	protected function buildListerTable(PageArray $results) {
 
+		/** @var Languages $languages */
+		$columns = $this->sessionGet('columns');
+		$systemLabels = $this->getSystemLabels();
+		$fields = array();
+		$header = array();
+		
 		/** @var MarkupAdminDataTable $table */
 		$table = $this->modules->get('MarkupAdminDataTable');
 		$table->setSortable(false);
 		$table->setResizable(true);
 		$table->setResponsive($this->responsiveTable);
 		$table->setClass('ProcessListerTable');
-		$columns = $this->sessionGet('columns'); 
+		$table->setEncodeEntities(false);
+		
 		if(!$columns) $columns = $this->columns; 
-		$fields = array();
-		$header = array();
-		$systemLabels = $this->getSystemLabels();
 
 		foreach($columns as $key => $name) {
+			
+			// determine if field is specifying different langauge
+			$language = $this->identifyLanguage($name, true);
 			$subname = '';
+			
 			if(strpos($name, '.')) list($name, $subname) = explode('.', $name);
 			$field = $this->template ? $this->template->fieldgroup->getField($name, true) : $this->fields->get($name);
 			if(!$field && $this->template) $field = $this->fields->get($name);
@@ -1091,19 +1261,35 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 			$label = $field ? $field->getLabel() : '';
 			if(!$label) $label = isset($systemLabels[$name]) ? $systemLabels[$name] : $name;
 			$icon = $field ? $field->getIcon(true) : '';
+			
+			$sep1 = '~~';
+			$sep2 = '&nbsp;&gt; ';
+			$label = str_replace($sep1, ' ', $label);
+			
 			if($subname) {
 				$subfield = $this->fields->get($subname);
-				$label .= ".";
+
 				if($subfield) {
-					$label .= $subfield->getLabel();
+					$sublabel = $subfield->getLabel();
+					$sublabel = str_replace($sep1, ' ', $sublabel);
+					if(!$sublabel) $sublabel = $subname;
+					$label .= $sep1 . $sublabel;
 					$subicon = $subfield->getIcon(true);
 					if($subicon) $icon = $subicon;
 				} else {
-					$label .= $subname;
+					$label .= $sep1 . $subname;
 				}
+
+				if($language) {
+					$label = $this->addLanguageLabel($label, $language);
+				}
+			} else if($language) {
+				$label = $this->addLanguageLabel($label, $language);
 			}
+			
 			$label = $this->wire('sanitizer')->entities1($label);
-			$label = str_replace('.', '.<wbr>', $label);
+			$label = str_replace($sep1, "$sep2<wbr>", $label);
+			
 			if($icon) {
 				// the following code ensures the first word of the label and icon don't get split on separate lines
 				$icon = "<strong>" . wireIconMarkup($icon, 'fw');
@@ -1114,14 +1300,15 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 				} else {
 					$label .= '</strong>';
 				}
+			} else if($subname) {
+				$label = "<strong>" . str_replace($sep2, "$sep2</strong>", $label); 
 			}
+			
 			$sortKey = $subname ? "$name.$subname" : $name;
 			$header[$key] = "$icon$label<b>$sortKey</b>";
 			$fields[$name] = $field; 
 		}
 
-		$table->setEncodeEntities(false);
-		$table->setSortable(false);
 		$table->headerRow($header); 
 
 		foreach($results as $p) {
@@ -1161,36 +1348,61 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	 * @param Page $p
 	 * @param array $fields
 	 * @param string $name
-	 * @param mixed $value
+	 * @param mixed $value Not used at present 
 	 * @return string
 	 *
 	 */
 	protected function buildListerTableCol(Page $p, array $fields, $name, $value = null) {
+		if($value) {} // ignore, used by ListerPro only
+
+		/** @var Sanitizer $sanitizer */
+		$sanitizer = $this->wire('sanitizer');
+		/** @var Languages $languages */
+		$languages = $this->wire('languages');
+		/** @var WireHooks $hooks */
+		$hooks = $this->wire('hooks');
+		
+		if($languages && $p->template->noLang) $languages = null;
+		$langPageNames = $languages && $this->wire('modules')->isInstalled('LanguageSupportPageNames');
 
 		$subname = '';
 		$fullname = $name; 
-		if(strpos($name, '.')) list($name, $subname) = explode('.', $name); 
+		$value = null;
+		$noEntities = false;
+		$language = $languages ? $this->identifyLanguage($name, true) : null;
+	
+		if($language && $language->id == $this->wire('user')->language->id) $language = null;
+		if($language) $languages->setLanguage($language);
+		
+		if(strpos($name, '.')) list($name, $subname) = explode('.', $name, 2); 
 		if($name == 'config' || $subname == 'config') return 'Not allowed';
 		
 		reset($fields); 
 		$isFirstCol = key($fields) == $name; 
 		
-		if($subname && $name == 'parent') {
-			// if parent and subname present, focus on just the subname value
-			if($value instanceof Page) $value = $value->getUnformatted($subname);
-			$name = $subname;
-			$subname = '';
-		}
-
 		/** @var Field $field */
 		$field = isset($fields[$name]) ? $fields[$name] : $this->wire('fields')->get($name);
-		if(is_null($value)) $value = $p->getUnformatted($name);
 		$delimiter = isset($this->delimiters[$fullname]) ? $this->delimiters[$fullname] : "<br />";
+
+		// if parent and subname present, make the parent the page and subname the field
+		if($subname && $name === 'parent') {
+			$p = $p->parent();
+			list($name, $subname) = array($subname, ''); 
+			$field = isset($fields[$name]) ? $fields[$name] : $this->wire('fields')->get($name);
+		} 
 		
+		if($languages && $field && $language) {
+			$value = $this->getLanguageValue($p, $field, $language);
+		} else if($langPageNames && $language && in_array($name, array('name', 'path', 'url', 'httpUrl'))) {
+			$value = $this->getLanguageValue($p, $name, $language);
+		}
+	
+		if($value === null) $value = $p->getFormatted($name);
+
 		if(!$subname && ($value instanceof Page || $value instanceof PageArray)) {
 			if($field && $field->get('labelFieldName')) {
 				$subname = $field->get('labelFieldName');
-				if($this->wire('sanitizer')->fieldName($subname) == $subname) $subname .= "|name"; // fallback
+				if($sanitizer->fieldName($subname) == $subname) $subname .= "|name"; // fallback
 			} else {
 				$subname = 'title|name';
 			}
@@ -1200,19 +1412,12 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 			// count
 			$value = $value->count();
 
-		} else if($field && $field->type && $this->wire('hooks')->isHooked($field->type->className() . '::markupValue()')) {
-			// if the markupValue method is hooked, let it have control
-			if($subname == 'data') $subname = '';
-			$value = $field->type->markupValue($p, $field, $value, $subname);
-			// value may be MarkupFieldtype object
-			$value = (string) $value;
-			
 		} else if($value instanceof Page) {
 			// page
 			if($field && $field->type) {
 				$value = $field->type->markupValue($p, $field, $value, $subname);
 			} else {
-				$value = $this->wire('sanitizer')->entities($value->getUnformatted($subname));
+				$value = $sanitizer->entities($value->getUnformatted($subname));
 			}
 
 		} else if($value instanceof PageArray) {
@@ -1251,9 +1456,15 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 				$value = '';
 			}
 			
+		} else if($field && $field->type && $hooks->isMethodHooked($field->type->className(), 'markupValue')) {
+			// if the markupValue method is hooked, let it have control
+			if($subname == 'data') $subname = '';
+			$value = $field->type->markupValue($p, $field, $value, $subname);
+			// value may be MarkupFieldtype object
+			$value = (string) $value;
+
 		} else if($value instanceof WireArray) {
 			// WireArray type unknown to Lister
-			$value = $p->getFormatted($name); // markupValue requires formatted value
 			$value = $field->type->markupValue($p, $field, $value, $subname);
 
 		} else if(is_array($value)) {
@@ -1269,15 +1480,15 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 					/** @var Pageimage $v */
 					$vfull = $v;
 					if($this->imageWidth || $this->imageHeight) $v = $v->size($this->imageWidth, $this->imageHeight);
-					$alt = $vfull->basename . ($vfull->description ? ' - ' . $this->sanitizer->entities1($vfull->description) : "");
+					$alt = $vfull->basename . ($vfull->description ? ' - ' . $sanitizer->entities1($vfull->description) : "");
 					$v = "<a href='$vfull->URL' title='$alt' class='lister-lightbox'><img alt='$alt' src='$v->URL' style='margin: 4px 4px 4px 0' /></a>";
 					$isImage = true;
 					
 				} else if($v instanceof Pagefile) {
 					/** @var Pageimage $v */
 					$v = "<a target='_blank' href='$v->url'>$v->basename</a>";
-				} else {
-					$v = $this->wire('sanitizer')->entities($v); 
+				} else if(!$noEntities) {
+					$v = $sanitizer->entities($v); 
 				}
 				$values[] = (string) $v;
 				if($isImage && $this->imageFirst) break;
@@ -1292,7 +1503,7 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 
 		} else if($field && $field->type instanceof FieldtypeDatetime) {
 			// datetime field
-			$value = $field->type->formatValue($p, $field, $value); 
+			// $value = $field->type->formatValue($p, $field, $value); 
 			$value = "<span class='datetime'>$value</span>";
 
 		} else if($field && $field->type instanceof FieldtypeCheckbox) {
@@ -1301,7 +1512,8 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 
 		} else if(in_array($name, array('modified_users_id', 'created_users_id'))) {
 			// user field
-			$value = $this->wire('users')->get((int) $value)->name; 
+			$u = $name === 'modified_users_id' ? $p->modifiedUser : $p->createdUser;
+			$value = $u && $u->id ? $u->name : "user_id:" . (int) $value; 
 
 		} else if($name == 'status') {
 			// status
@@ -1311,21 +1523,89 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 
 		} else if($field && $field->type) {
 			if($subname == 'data') $subname = '';
-			$value = $field->type->markupValue($p, $field, $value, $subname); 
+			$value = $field->type->markupValue($p, $field, $value, $subname);
 			// value may be MarkupFieldtype object
-			$value = (string) $value; 
+			$value = (string) $value;
 			
 		} else {
 			// other or unknown
 			if($subname == 'data') $value = (string) $value;
 			if($subname && is_object($value)) $value = $value->$subname;
-			$value = $this->wire('sanitizer')->entities($value); 
+			$value = $noEntities ? $value : $sanitizer->entities($value); 
 		}
 	
 		if($isFirstCol) $value = $this->buildListerTableColActions($p, $value);
+		if($language) $languages->unsetLanguage();
 
 		return $value; 
 
+	}
+
+	/**
+	 * Identify language for given field name / column name
+	 * 
+	 * Language present as either 'field-de' (de is language name) or 'field.data1234' (1234 is language ID).
+	 * Until LP requires version 3.0.137 or newer of Lister, any changes to this method should also be applied to LP.
+	 * 
+	 * @param string $name
+	 * @param bool $remove Remove language identify from given field name?
+	 * @return Language|null
+	 * @since 3.0.137
+	 * 
+	 */
+	public function identifyLanguage(&$name, $remove = false) {
+		
+		/** @var Languages $languages */
+		$languages = $this->wire('languages');
+		if(!$languages) return null;
+		
+		$language = null;
+		
+		if(strpos($name, '-') && preg_match('/-([-_a-z0-9]+)$/', $name, $matches)) {
+			// i.e. title-de or categories.title-de
+			$language = $languages->get($matches[1]); 
+		} else if(strpos($name, '.data') && preg_match('/\.data(\d+)$/', $name, $matches)) {
+			// i.e. title.data1234 or categories.title.data1234
+			$language = $languages->get((int) $matches[1]); 
+		}
+		
+		//if(!wireInstanceOf($field->type, 'FieldtypeLanguageInterface')) return null;
+		if(!$language || !$language->id) $language = $languages->getDefault();
+		if(!$language || !$language->id) $language = null;
+		
+		if($remove && $language) {
+			$name = str_replace(array("-$language->name", ".data$language->id"), '', $name);
+		}
+		
+		return $language;
+	}
+
+	/**
+	 * Get value for language 
+	 * @param Page $page
+	 * @param string|Field $fieldName
+	 * @param Language|string $language
+	 * @return mixed
+	 * 
+	 */
+	protected function getLanguageValue(Page $page, $fieldName, $language) {
+		if($fieldName instanceof Field) $fieldName = $fieldName->name;
+		$languages = $this->wire('languages');
+		if(!$languages) return $page->getFormatted($fieldName);
+		if($fieldName === 'name') {
+			$value = $page->localName($language);
+		} else if($fieldName === 'path') {
+			$value = $page->localPath($language);
+		} else if($fieldName === 'url') {
+			$value = $page->localUrl($language);
+		} else if(strtolower($fieldName) === 'httpurl') {
+			$value = $page->localHttpUrl($language);
+		} else {
+			$languages->setLanguage($language);
+			$value = $page->getFormatted($fieldName);
+			$languages->unsetLanguage();
+		}
+		return $value;
 	}
 	
 	/**
@@ -1510,12 +1790,14 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 		if(is_null($pageListRender)) {
 			require_once($this->wire('config')->paths->ProcessPageList . 'ProcessPageListRenderJSON.php');
 			$pageListRender = $this->wire(new ProcessPageListRenderJSON($this->wire('page'), $this->wire('pages')->newPageArray())); 
+			$pageListRender->setUseTrash($this->wire('user')->isSuperuser()); 
 		}
 		
 		$actions = $pageListRender->getPageActions($p);
 
 		if(isset($actions['edit']) && $this->editURL && strpos($actions['edit']['url'], '/page/edit/') !== false) {
 			list($path, $queryString) = explode('?', $actions['edit']['url']);
+			if($path) {} // ignore, descriptive only
 			$actions['edit']['url'] = $this->editURL . '?' . $queryString;
 		}
 		
@@ -1571,7 +1853,13 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 
 		try {
 			$options = array('allowCustom' => true);
-			$results = $selector ? $this->wire('pages')->find($selector, $options) : $this->wire('pages')->newPageArray();
+			/** @var Pages $pages */
+			$pages = $this->wire('pages');
+			$results = $selector ? $pages->find($selector, $options) : $pages->newPageArray();
+			$this->finalSelector = $results->getSelectors(true);
+			if($this->wire('config')->debug && $this->wire('config')->advanced) {
+				$this->finalSelectorParsed = (string) $pages->loader()->getLastPageFinder()->getSelectors();
+			}
 			
 		} catch(\Exception $e) {
 			$this->error($e->getMessage());
@@ -1602,6 +1890,9 @@ class ProcessPageLister extends Process implements ConfigurableModule {
  	 *
 	 */
 	protected function ___renderResults($selector = null) {
+		
+		/** @var Sanitizer $sanitizer */
+		$sanitizer = $this->wire('sanitizer');
 
 		if(is_null($selector)) $selector = $this->getSelector();
 		if(!count($this->columns)) $this->columns = $this->defaultColumns; 
@@ -1649,9 +1940,24 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 				"<div id='ProcessListerTable'>$tableOut</div>" . 
 				$pagerOut; 
 
+		if(count($this->resultNotes)) {
+			$notes = array();
+			foreach($this->resultNotes as $note) {
+				$notes[] = wireIconMarkup('warning') . ' ' . $sanitizer->entities1($note);
+			}
+			$out .= "<p id='ProcessListerResultNotes' class='detail'>" . implode('<br />', $notes) . "</p>";
+		}
 		if($this->wire('config')->debug) {
-			$out .= "<p id='ProcessListerSelector' class='notes'>" . $this->wire('sanitizer')->entities($this->finalSelector) . "</p>";
-			//$out .= "<p id='ProcessListerSelector' class='notes'>" . $this->wire('sanitizer')->entities($findSelector) . "</p>";
+			$out .= "<p id='ProcessListerSelector' class='notes'>"; 
+			if($this->finalSelectorParsed && $this->finalSelector != $this->finalSelectorParsed) {
+				// selector was modified after being parsed by PageFinder
+				$out .= 
+					"<strong>1:</strong> " . $sanitizer->entities($this->finalSelector) . "<br />" . 
+					"<strong>2:</strong> " . $sanitizer->entities($this->finalSelectorParsed);
+			} else {
+				$out .= $sanitizer->entities($this->finalSelector); 
+			}
+			$out .= "</p>";
 		}
 		
 		if(!$this->editOption) {
@@ -1721,7 +2027,7 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	
 		$this->setupOpenPageIDs();
 	
-		if($this->wire('config')->ajax) {
+		if($this->renderResults) {
 			$out = $this->renderResults();
 			if(self::debug) {
 				foreach($this->wire('database')->queryLog() as $n => $item) {
@@ -1755,9 +2061,7 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 			}
 			if($this->allowBookmarks) {
 				$bookmarks = $this->getBookmarksInstance();
-				if($this->wire('user')->isSuperuser() || count($bookmarks->getBookmarks())) {
-					$out .= $bookmarks->buildBookmarkListForm()->render();
-				}
+				$out .= $bookmarks->buildBookmarkListForm()->render();
 			}
 			$out .= $this->renderExtras(); 
 		}
@@ -1805,7 +2109,8 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 			$btn->href = $this->addURL . $action;
 			$btn->showInHeader();
 			$btn->icon = 'plus-circle';
-			$out = str_replace("<a ", "<a class='$btnClass' ", $btn->render());
+			$btn->aclass = $btnClass;
+			$out = $btn->render();
 			if($this->editMode == self::windowModeBlank) $out = str_replace("<a " ,"<a target='_blank' ", $out);
 		}
 		
@@ -1814,7 +2119,7 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 
 	/**
 	 * Render additional tabs, setup so that descending classes can use as a template method
-	 *
+	 * 
 	 * @return string
 	 *
 	 */
@@ -1823,7 +2128,23 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 		$resetLabel = $this->_('Reset filters and columns to default'); 
 		$out = "<div id='ProcessListerRefreshTab' title='$refreshLabel' class='WireTab WireTabTip'></div>";
 		$out .= "<div id='ProcessListerResetTab' title='$resetLabel' class='WireTab WireTabTip'></div>";
+		$out = $this->renderedExtras($out);
 		return $out; 
+	}
+
+	/**
+	 * Called when extra tabs markup has been rendered
+	 * 
+	 * Optionally hook this if you want to modify or add additional tabs markup returned by renderExtras()
+	 * 
+	 * #pw-hooker
+	 *
+	 * @param string $markup Existing tab markup already rendered
+	 * @return string Contents of the $markup variable optionally prepended/appended with additional tab markup
+	 * 
+	 */
+	public function ___renderedExtras($markup) {
+		return $markup;
 	}
 
 	/**
@@ -1865,9 +2186,9 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 		$script = '';
 		$regex = '!(Inputfield|Language|Fieldtype|Process|Markup|Jquery)!';
 		$scriptClose = '';
-		$loadedFiles = $this->sessionGet('loadedFiles');
+		$loadedFiles = $this->sessionGet('loadedFiles', array());
 		$loadedFilesAdd = array();
-		$loadedJSConfig = $this->sessionGet('loadedJSConfig');
+		$loadedJSConfig = $this->sessionGet('loadedJSConfig', array());
 		$config = $this->wire('config');
 
 		foreach($config->scripts as $file) {
@@ -1945,7 +2266,29 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 	 */
 	public function ___executeEditBookmark() {
 		if(!$this->allowBookmarks) throw new WireException("Bookmarks are disabled");
-		return $this->getBookmarksInstance()->editBookmark();
+		return $this->getBookmarksInstance()->executeEditBookmark();
+	}
+
+	/**
+	 * Catch-all for bookmarks
+	 * 
+	 * @return string
+	 * @throws Wire404Exception
+	 * @throws WireException
+	 * 
+	 */
+	public function ___executeUnknown() {
+		$bookmarkID = $this->wire('input')->urlSegment1;
+		if(strpos($bookmarkID, 'bm') === 0) {
+			$bookmarks = $this->getBookmarksInstance();
+			$bookmarkID = $bookmarks->_bookmarkID(ltrim($bookmarkID, 'bm'));
+		} else {
+			$bookmarkID = '';
+		}
+		if(!$bookmarkID || !$this->checkBookmark($bookmarkID)) {
+			throw new Wire404Exception('Unknown Lister action', Wire404Exception::codeNonexist);
+		}
+		return $this->execute();
 	}
 
 	/**
@@ -1972,13 +2315,14 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 			$user = $this->wire('user');
 			$languageID = $languages && !$user->language->isDefault() ? $user->language->id : '';
 
-			foreach($bookmarks as $n => $bookmark) {
+			foreach($bookmarks as $bookmarkID => $bookmark) {
 				$name = $bookmark['title'];
+				$icon = $bookmark['type'] ? 'user-circle-o' : 'search';
 				if($languageID && !empty($bookmark["title$languageID"])) $name = $bookmark["title$languageID"];
 				$item = array(
-					'id'   => $n,
+					'id'   => $bookmarkID,
 					'name' => $name,
-					'icon' => 'search',
+					'icon' => $icon,
 				);
 				$items[] = $item;
 			}
@@ -1994,7 +2338,6 @@ class ProcessPageLister extends Process implements ConfigurableModule {
 		
 		return parent::___executeNavJSON($options);
 	}
-	
 
 
 	/**

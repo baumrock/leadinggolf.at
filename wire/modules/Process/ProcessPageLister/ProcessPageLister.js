@@ -25,14 +25,11 @@ var ProcessLister = {
 		if(ProcessLister.initialized) return;
 		ProcessLister.initialized = true;
 		if($("#ProcessLister").length == 0) return;
-
-		ProcessLister.spinner = $("<li class='title' id='ProcessListerSpinner'><i class='fa fa-lg fa-spin fa-spinner'></i></li>"); 
-		$("#breadcrumbs ul.nav").append(ProcessLister.spinner); 
 		
+		ProcessLister.initSpinners();
 		ProcessLister.filters = $("#ProcessListerFilters"); 
 		ProcessLister.results = $("#ProcessListerResults");
 		ProcessLister.lister = $("#ProcessLister"); 
-
 		ProcessLister.filters.change(function() { ProcessLister.submit(); }); 
 		ProcessLister.results.on('click', '.ProcessListerTable > thead th', ProcessLister.columnSort)
 
@@ -60,10 +57,10 @@ var ProcessLister = {
 		}); 
 
 		$("#ProcessListerActionsForm").find('script').remove(); // to prevent from running twice after being WireTabbed
-		if(ProcessLister.lister.size() > 0) ProcessLister.lister.WireTabs({ items: $(".WireTab") });
+		if(ProcessLister.lister.length > 0) ProcessLister.lister.WireTabs({ items: $(".WireTab") });
 
 
-		$("#_ProcessListerRefreshTab").html("<i class='fa fa-refresh ui-priority-secondary'></i>")
+		$("#_ProcessListerRefreshTab").html("<i class='fa fa-fw fa-refresh ui-priority-secondary'></i>")
 			.unbind('click')
 			.click(function() {
 				ProcessLister.resetTotal = true; 
@@ -71,7 +68,7 @@ var ProcessLister = {
 				return false;
 			});
 
-		$("#_ProcessListerResetTab").html("<i class='fa fa-rotate-left ui-priority-secondary'></i>")
+		$("#_ProcessListerResetTab").html("<i class='fa fa-fw fa-rotate-left ui-priority-secondary'></i>")
 			.unbind('click')
 			.click(function() {
 				window.location.href = './?reset=1';
@@ -83,6 +80,34 @@ var ProcessLister = {
 		if(ProcessLister.numSubmits == 0) ProcessLister.submit();
 			else ProcessLister.spinner.fadeOut();
 	},
+
+	/**
+	 * Initialize spinners
+	 * 
+	 */
+	initSpinners: function() {
+		var $parent = $("#breadcrumbs ul.nav");
+		if($parent.length) {
+			// legacy spinner (AdminThemeDefault, AdminThemeReno)
+			ProcessLister.spinner = $("<li class='title' id='ProcessListerSpinner'><i class='fa fa-lg fa-spin fa-spinner'></i></li>");
+			$parent.append(ProcessLister.spinner);
+		} else {
+			// in AdminThemeUikit or others, this spinner is not used
+			ProcessLister.spinner = $(''); 
+		}
+
+		$(document).ajaxStart(function() {
+			var $spinner = $('#_ProcessListerRefreshTab').find('i');
+			if($spinner.length) $spinner.removeClass('fa-refresh').addClass('fa-spin fa-spinner');
+		});
+		
+		$(document).ajaxStop(function() {
+			var $spinner = $('#_ProcessListerRefreshTab').find('i');
+			if($spinner.length) $spinner.fadeOut('fast', function() {
+				$spinner.removeClass('fa-spin fa-spinner').addClass('fa-refresh').fadeIn('fast');
+			});
+		});
+	}, 
 	
 	/**
 	 * Implementation for table header (th) click event
@@ -132,17 +157,19 @@ var ProcessLister = {
 					if(!confirm(msg)) return false;
 				}
 			}
+			ProcessLister.results.find('.lister_headline').append("<i class='fa fa-spin fa-spinner'></i>");
 		} else {
 			refreshAll = false;
 		}
 		
 		ProcessLister.numSubmits++;
-		if(typeof url == "undefined") var url = "./";
+		if(typeof url == "undefined") url = "./";
 
 		ProcessLister.spinner.fadeIn('fast'); 
 		
 		var submitData = {
-			filters: refreshAll ? ProcessLister.filters.val() : '',
+			render_results: 1, 
+			filters: refreshAll ? ProcessLister.filters.val() : 'ignore',
 			columns: $('#lister_columns').val(),
 			sort: $('#lister_sort').val()
 		};
@@ -159,7 +186,9 @@ var ProcessLister = {
 		}
 		
 		if(ProcessLister.refreshRowPageIDs.length > 0) {
-			submitData['row_page_id'] = ProcessLister.refreshRowPageIDs.join(',');
+			var rowPageIDs = ProcessLister.refreshRowPageIDs.join(',');
+			if(rowPageIDs.indexOf(',') === 0) rowPageIDs = rowPageIDs.replace(/^,+/, ''); // ltrim
+			submitData['row_page_id'] = rowPageIDs;
 			ProcessLister.resetTotal = false;
 		}
 
@@ -182,8 +211,10 @@ var ProcessLister = {
 	 * 
 	 */
 	_submitSuccess: function(data) {
+		var refreshAll = true;
 		
 		if(ProcessLister.refreshRowPageIDs.length) {
+			refreshAll = false;
 		
 			for(var n in ProcessLister.refreshRowPageIDs) {
 				var pageID = ProcessLister.refreshRowPageIDs[n];
@@ -206,12 +237,15 @@ var ProcessLister = {
 						}, 1000);
 					}
 					if($newRow.find(".Inputfield").length) InputfieldsInit($newRow);
+				} else if($oldRow.length && !$newRow.length) {
+					$oldRow.remove(); // row no longer appears in results
 				}
 			}
 			ProcessLister.refreshRowPageIDs = [];
 			
 		} else {
 			// update entire table
+			ProcessLister.results.fadeTo(0, 0);
 			var sort = $("#lister_sort").val();
 			ProcessLister.results.html(data).find("table.ProcessListerTable > thead th").each(function () {
 				var $b = $(this).find('b');
@@ -219,7 +253,8 @@ var ProcessLister = {
 				$b.remove();
 				$(this).find('span').remove();
 				var $icon = $(this).find('i');
-				var label = $(this).text();
+				if($icon.length) $icon.remove(); // before the html() call
+				var label = $(this).html();
 				if (txt == sort) {
 					$(this).html("<u>" + label + "</u><span>&nbsp;&darr;</span><b>" + txt + "</b>");
 				} else if (sort == '-' + txt) {
@@ -257,6 +292,7 @@ var ProcessLister = {
 			$("a.actions_toggle.open").click().removeClass('open'); // auto open items corresponding to "open" get var
 			if(typeof AdminDataTable != "undefined") AdminDataTable.init();
 			$("a.lister-lightbox", ProcessLister.results).magnificPopup({ type: 'image', closeOnContentClick: true, closeBtnInside: true });
+			if(refreshAll) ProcessLister.results.fadeTo(0, 1.0);
 		}, 250);
 
 		var pos = data.indexOf('ProcessListerScript');

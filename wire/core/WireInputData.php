@@ -16,7 +16,7 @@
  *
  * Each WireInputData is not instantiated unless specifically asked for.
  * 
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2018 by Ryan Cramer
  * https://processwire.com
  *
  * @link http://processwire.com/api/ref/input/ Offical $input API variable documentation
@@ -71,15 +71,41 @@ class WireInputData extends Wire implements \ArrayAccess, \IteratorAggregate, \C
 	protected $data = array();
 
 	/**
+	 * Are we working with lazy data (data by reference)?
+	 * 
+	 * @var bool
+	 * 
+	 */
+	protected $lazy = false;
+
+	/**
+	 * When lazy mode is active, these are keys of values set in a non-lazy way
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $unlazyKeys = array();
+
+	/**
 	 * Construct
 	 * 
 	 * @param array $input Associative array of variables to store
+	 * @param bool $lazy Use lazy loading?
 	 * 
 	 */
-	public function __construct(array $input = array()) {
+	public function __construct(&$input = array(), $lazy = false) {
 		$this->useFuel(false);
-		$this->stripSlashes = get_magic_quotes_gpc();
-		$this->setArray($input);
+		if(version_compare(PHP_VERSION, '5.4.0', '<') && function_exists('get_magic_quotes_gpc')) {
+			$this->stripSlashes = get_magic_quotes_gpc();
+		}
+		if(!empty($input)) {
+			if($lazy) {
+				$this->data = &$input;
+				$this->lazy = true;
+			} else {
+				$this->setArray($input);
+			}
+		}
 	}
 
 	/**
@@ -101,7 +127,19 @@ class WireInputData extends Wire implements \ArrayAccess, \IteratorAggregate, \C
 	 * 
 	 */
 	public function getArray() {
-		return $this->data;
+		if($this->lazy) {
+			$data = array();
+			foreach($this->data as $key => $value) {
+				if(isset($this->unlazyKeys[$key])) {
+					$data[$key] = $value;
+				} else {
+					$data[$key] = $this->__get($key);
+				}
+			}
+			return $data;
+		} else {
+			return $this->data;
+		}
 	}
 
 	/**
@@ -112,9 +150,181 @@ class WireInputData extends Wire implements \ArrayAccess, \IteratorAggregate, \C
 	 *
 	 */
 	public function __set($key, $value) {
-		if(is_string($value) && $this->stripSlashes) $value = stripslashes($value);
-		if(is_array($value)) $value = $this->cleanArray($value);
+		if(is_string($value)) {
+			if($this->stripSlashes) $value = stripslashes($value);
+		} else if(is_array($value)) {
+			$value = $this->cleanArray($value);
+		}
 		$this->data[$key] = $value;
+		if($this->lazy) $this->unlazyKeys[$key] = $key;
+	}
+
+	/**
+	 * Set a value 
+	 * 
+	 * @param string $key
+	 * @param string|int|float|array|null $value
+	 * @return $this
+	 * @param array|int|string $options Options not currently used, but available for descending classes or future use
+	 * @since 3.0.141 You can also use __set() or set directly for compatibility with all versions
+	 * 
+	 */
+	public function set($key, $value, $options = array()) {
+		if($options) {} // not currently used by this class
+		$this->__set($key, $value);
+		return $this;
+	}
+
+	/**
+	 * Get a value
+	 * 
+	 * @param string $key
+	 * @param array|int|string $options Options not currently used, but available for descending classes or future use
+	 * @return string|int|float|array|null $value
+	 * @since 3.0.141 You can also get directly or use __get(), both of which are compatible with all versions
+	 * 
+	 */
+	public function get($key, $options = array()) {
+		if($options) {} // not currently used by this class
+		return $this->__get($key);
+	}
+
+	/**
+	 * Find one input var that matches given pattern in name (or optionally value)
+	 *
+	 * @param string $pattern Wildcard string or PCRE regular expression
+	 * @param array|int|string $options
+	 *  - `type` (string): Specify "value" to match input value (rather input name), OR prefix pattern with "value=".
+	 *  - `sanitizer` (string): Name of sanitizer to run values through (default='', none)
+	 *  - `arrays` (bool): Also find on input varibles that are arrays? (default=false)
+	 * @return string|int|float|array|null $value Returns value if found or null if not. 
+	 * @since 3.0.163
+	 *
+	 */
+	public function findOne($pattern, $options = array()) {
+		if(!strlen($pattern)) return null;
+		if(ctype_alnum(str_replace(array('_', '-', '.'), '', $pattern))) return $this->__get($pattern);
+		$options['limit'] = 1;
+		$value = $this->find($pattern, array_merge($options, $options));
+		return array_shift($value); // returns null if empty
+	}
+
+	/**
+	 * Find all input vars that match given pattern in name (or optionally value)
+	 * 
+	 * ~~~~~
+	 * // find all input vars having name beginning with "title_" (i.e. title_en, title_de, title_es)
+	 * $values = $input->post->find('title_*');
+	 * 
+	 * // find all input vars having name with "title" anywhere in it (i.e. title, subtitle, titles, title_de)
+	 * $values = $input->post->find('*title*');
+	 * 
+	 * // find all input vars having value with the term "wire" anywhere, regardless of case
+	 * $values = $input->post->find('/wire/i', [ 'type' => 'value' ]); 
+	 * 
+	 * // example of result from above find operation:
+	 * $values = [
+	 *   'title' => 'ProcessWire CMS', 
+	 *   'subtitle' => 'Have plenty of caffeine to make sure you are wired', 
+	 *   'sidebar' => 'Learn how to rewire a flux capacitor...',
+	 *   'summary' => 'All about the $wire API variable',
+	 * ];
+	 * ~~~~~
+	 * 
+	 * @param string $pattern Wildcard string or PCRE regular expression
+	 * @param array $options
+	 *  - `type` (string): Specify "value" to match input value (rather input name), OR prefix pattern with "value=".
+	 *  - `limit` (int): Maximum number of items to return (default=0, no limit)
+	 *  - `sanitizer` (string): Name of sanitizer to run values through (default='', none)
+	 *  - `arrays` (bool): Also find on input varibles that are arrays? (default=false)
+	 * @return array Returns associative array of values `[ name => value ]` if found, or empty array if none found.
+	 * @since 3.0.163
+	 * 
+	 */
+	public function find($pattern, array $options = array()) {
+		
+		$defaults = array(
+			'type' => 'name', // match on 'name' or 'value' (default='name')
+			'limit' => 0, // max allowed matches in return value
+			'values' => $this, // use these values rather than those from this input class
+			'sanitizer' => '', // sanitizer name to apply found values
+			'arrays' => false, // also find on input vars that are arrays?
+		);
+		
+		if(!strlen($pattern)) return array();
+		
+		$options = array_merge($defaults, $options);
+		$sanitizer = $this->wire('sanitizer'); /** @var Sanitizer $sanitizer */
+		$isRE = in_array($pattern[0], array('/', '!', '%', '#', '@'));
+		$items = array();
+		$count = 0;
+		$type = $options['type'];
+		$tests = array();
+		
+		if(!strlen($pattern)) return array();
+	
+		if(strpos($pattern, '=')) {
+			// pattern indicates "value=pattern" or "name=pattern"
+			list($type, $pattern) = explode('=', $pattern, 2);
+		}
+		
+		if(!$isRE && strpos($pattern, '*') !== false) {
+			// wildcard, convert to regex
+			$a = explode('*', $pattern);
+			foreach($a as $k => $v) {
+				if(!strlen($v)) continue;
+				$a[$k] = preg_quote($v);
+				$tests[] = $v;
+			}
+			$isRE = true;
+			$pattern = '/^' . implode('.*', $a) . '$/';
+		}
+	
+		if(!count($tests)) $tests = false;
+		
+		foreach($options['values'] as $name => $value) {
+			
+			if($options['limit'] && $count >= $options['limit']) break;
+			
+			$isArray = is_array($value);
+			
+			if($isArray && !$options['arrays']) {
+				continue;
+			} else if($isArray && $type === 'value') {
+				$v = $this->find($pattern, array_merge($options, array('values' => $value)));
+				if(count($v)) list($items[$name], $count) = array($v, $count + 1); 
+				continue;
+			} else if($type === 'value') {
+				$match = $value;
+			} else {
+				$match = $name;
+			}
+			
+			if($tests) {
+				// tests to confirm a preg_match is necessary (wildcard mode only)
+				$passes = true;
+				foreach($tests as $test) {
+					$passes = strpos($match, $test) !== false;
+					if(!$passes) break;
+				}
+				if(!$passes) continue;
+			}
+			
+			if($isRE) {
+				if(!preg_match($pattern, $match)) continue;
+			} else {
+				if(strpos($match, $pattern) === false) continue;
+			}
+			
+			if($options['sanitizer']) {
+				$value = $sanitizer->sanitize($value, $options['sanitizer']);
+			}
+			
+			$items[$name] = $value;
+			$count++;
+		}
+		
+		return $items;
 	}
 
 	/**
@@ -154,12 +364,40 @@ class WireInputData extends Wire implements \ArrayAccess, \IteratorAggregate, \C
 	 *
 	 */
 	public function __get($key) {
-		// if($key == 'whitelist') return $this->whitelist;
-		return isset($this->data[$key]) ? $this->data[$key] : null;
+		
+		if(strpos($key, '|')) {
+			$value = null;
+			foreach(explode('|', $key) as $k) {
+				$value = $this->__get($k);
+				if($value !== null) break;
+			}
+			return $value;
+			
+		} else if(isset($this->data[$key])) {
+			$value = $this->data[$key];
+			if($this->lazy && !isset($this->unlazyKeys[$key])) {
+				// in lazy mode, value is not cleaned until it is accessed
+				if(is_string($value)) {
+					if($this->stripSlashes) $value = stripslashes($value);
+				} else if(is_array($value)) {
+					$value = $this->cleanArray($value);
+				}
+			}
+			
+		} else {
+			$value = null;
+		}
+		
+		return $value;
 	}
 
 	public function getIterator() {
-		return new \ArrayObject($this->data);
+		if($this->lazy) {
+			$data = $this->getArray();
+			return new \ArrayObject($data);
+		} else {
+			return new \ArrayObject($this->data);
+		}
 	}
 
 	public function offsetExists($key) {
@@ -176,19 +414,35 @@ class WireInputData extends Wire implements \ArrayAccess, \IteratorAggregate, \C
 
 	public function offsetUnset($key) {
 		unset($this->data[$key]);
+		if($this->lazy && isset($this->unlazyKeys[$key])) unset($this->unlazyKeys[$key]); 
 	}
 
 	public function count() {
 		return count($this->data);
 	}
-	
+
+	/**
+	 * Remove a value from input 
+	 * 
+	 * @param string $key Name of input variable to remove value for 
+	 * @return $this
+	 * 
+	 */
 	public function remove($key) {
-		unset($this->data[$key]);
+		$this->offsetUnset($key);
 		return $this;
 	}
 
+	/**
+	 * Remove all values from input
+	 * 
+	 * @return $this
+	 * 
+	 */
 	public function removeAll() {
 		$this->data = array();
+		$this->lazy = false;
+		$this->unlazyKeys = array();
 		return $this;
 	}
 
@@ -200,39 +454,62 @@ class WireInputData extends Wire implements \ArrayAccess, \IteratorAggregate, \C
 		$this->offsetUnset($key);
 	}
 
-	public function queryString($overrides = array()) {
-		return http_build_query(array_merge($this->getArray(), $overrides)); 
+	/**
+	 * Return a query string of all input values
+	 * 
+	 * Please note returned query string contains non-sanitized/non-validated variables, so this method
+	 * should only be used for specific cases where all input is known to be safe/valid. If that is not
+	 * an option then use PHP’s `http_build_query()` function on your own with known safe/valid values.
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param array $overrides Associative array of [ name => value ] containing values to override/replace
+	 * @param string $separator String to separate values with, i.e. '&' or '&amp;' (default='&')
+	 * @return string
+	 * @since 3.0.163
+	 * 
+	 */
+	public function queryString($overrides = array(), $separator = '&') {
+		return http_build_query(array_merge($this->getArray(), $overrides), '', $separator); 
 	}
 
 	/**
 	 * Maps to Sanitizer functions
 	 *
-	 * @param $method
-	 * @param $arguments
-	 *
+	 * @param string $method
+	 * @param array $arguments
 	 * @return string|int|array|float|null Returns null when input variable does not exist
 	 * @throws WireException
 	 *
 	 */
-	public function __call($method, $arguments) {
+	public function ___callUnknown($method, $arguments) {
 		$sanitizer = $this->wire('sanitizer');
-		$method = ltrim($method, '_');
-		if(!method_exists($sanitizer, $method)) {
-			$method = "___$method";
-			if(!method_exists($sanitizer, $method)) {
-				$method = ltrim($method, "_");
-				throw new WireException("Unknown method '$method' - Specify a valid Sanitizer or WireInputData method.");
+		if(!$sanitizer->methodExists($method)) {
+			try {
+				return parent::___callUnknown($method, $arguments);
+			} catch(\Exception $e) {
+				throw new WireException("Unknown method '$method' - specify a valid Sanitizer name or WireInputData method"); 
 			}
 		}
 		if(!isset($arguments[0])) {
 			throw new WireException("For method '$method' specify an input variable name for first argument");
 		}
+		// swap input name with input value in arguments array
 		$arguments[0] = $this->__get($arguments[0]);
-		if(is_null($arguments[0])) {
-			// value is not present in input at all
-			// @todo do you want to provide an alternate means of handling this situation?
+		if($arguments[0] === null) {
+			// value is not present in input at all, accommodate potential fallback value?
 		}
-		return call_user_func_array(array($sanitizer, $method), $arguments);
+		if(count($arguments) > 1) {
+			// more than one argument to sanitizer method
+			return call_user_func_array(array($sanitizer, $method), $arguments);
+		} else {
+			// single argument, pass along to sanitize method
+			return $sanitizer->sanitize($arguments[0], $method); 
+		}
+	}
+	
+	public function __debugInfo() {
+		return $this->data;
 	}
 }
 

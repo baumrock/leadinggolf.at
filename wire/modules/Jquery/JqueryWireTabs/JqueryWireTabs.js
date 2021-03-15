@@ -40,6 +40,7 @@
 			var $target = $(this); 
 			var lastTabID = ''; // ID attribute of last tab that was clicked
 			var generate = true; // generate markup/manipulate DOM?
+			var queueTabClick = []; // queued wiretabclick event, becomes false after document.ready
 
 			function init() {
 
@@ -103,6 +104,12 @@
 				} else {
 					$tabList.children("li:first").children("a").click();
 				}
+				
+				$(document).ready(function() {
+					// if a wiretabclick event queued before document.ready, trigger it now
+					if(queueTabClick.length) $(document).trigger('wiretabclick', [ queueTabClick[0], queueTabClick[1] ]);
+					queueTabClick = false;
+				});
 			}
 
 			function addTab() {
@@ -116,7 +123,7 @@
 				if($a.length > 0) {
 					$a.click(tabClick); 
 				} else {
-					var $a = $("<a></a>")
+					$a = $("<a></a>")
 						.attr('href', '#' + href)
 						.attr('id', '_' + href) // ID equal to tab content ID, but preceded with underscore
 						.html(title)
@@ -192,19 +199,22 @@
 					if(options.rememberTabs == 1) setTabCookie(newTabID); 
 					lastTabID = newTabID; 
 				}
-				$(document).trigger('wiretabclick', [ $newTabContent, $oldTabContent ]); 
+				if(queueTabClick === false) {
+					$(document).trigger('wiretabclick', [ $newTabContent, $oldTabContent ]);
+				} else {
+					queueTabClick = [ $newTabContent, $oldTabContent ];
+				}
 				return false; 
 			}
 
 			function setTabCookie(value) {
-				document.cookie = options.cookieName + '=' + options.requestID + '-' + escape(value);
+				jQuery.cookie(options.cookieName, options.requestID + '-' + value); 
 			}
 	
 			function getTabCookie() {
-				var regex = new RegExp('(?:^|;)\\s?' + options.cookieName + '=' + options.requestID + '-(.*?)(?:;|$)','i');
-				var match = document.cookie.match(regex);	
-				match = match ? match[1] : '';
-				return match;
+				var value = jQuery.cookie(options.cookieName); 
+				if(!value || value.indexOf(options.requestID + '-') !== 0) return '';
+				return value.substring(options.requestID.length + 1); 
 			}
 
 			init(); 

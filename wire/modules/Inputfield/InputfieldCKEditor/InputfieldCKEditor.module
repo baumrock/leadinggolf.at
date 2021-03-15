@@ -3,10 +3,10 @@
 /**
  * ProcessWire Inputfield for CKEditor
  *
- * CKEditor Copyright (C) 2003-2017, CKSource - Frederico Knabben
+ * CKEditor Copyright (C) 2003-2019, CKSource - Frederico Knabben
  * http://ckeditor.com
  *
- * ProcessWire 3.x, Copyright 2017 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
  * https://processwire.com
  * 
  * @property bool|int $inlineMode ($default=0)
@@ -24,6 +24,7 @@
  * @property string $customOptions
  * @property array $imageFields
  * @property int $assetPageID
+ * @property string $configName
  * 
  *
  */
@@ -33,7 +34,7 @@ class InputfieldCKEditor extends InputfieldTextarea {
 	public static function getModuleInfo() {
 		return array(
 			'title' => 'CKEditor',
-			'version' => 160, 
+			'version' => 163, 
 			'summary' => __('CKEditor textarea rich text editor.', __FILE__),
 			'installs' => array('MarkupHTMLPurifier'), 
 			);
@@ -84,7 +85,7 @@ class InputfieldCKEditor extends InputfieldTextarea {
 	 * Version number for CKEditor directory
 	 *
 	 */
-	const CKEDITOR_VERSION = '4.8.0';
+	const CKEDITOR_VERSION = '4.14.0';
 
 	/**
 	 * Instance of MarkupHTMLPurifier module
@@ -291,7 +292,11 @@ class InputfieldCKEditor extends InputfieldTextarea {
 		
 		$extraPlugins = $this->extraPlugins;
 		$imagesField = $this->getImagesFieldName($assetPage);
-		if($imagesField) $extraPlugins[] = 'uploadimage';
+		
+		if($imagesField) {
+			$extraPlugins[] = 'uploadimage';
+			$this->addClass('InputfieldHasUpload', 'wrapClass'); 
+		}
 
 		$settings = array(
 			'baseHref' => $config->urls->root,
@@ -308,6 +313,10 @@ class InputfieldCKEditor extends InputfieldTextarea {
 			'pwUploadField' => $imagesField,
 			'pwAssetPageID' => $assetPage->id,
 		);
+		
+		if(empty($settings['extraAllowedContent'])) {
+			unset($settings['extraAllowedContent']);
+		}
 	
 		if($assetPage !== $this->hasPage && $assetPage->id) {
 			// external asset page (FUTURE USE)
@@ -505,7 +514,11 @@ class InputfieldCKEditor extends InputfieldTextarea {
 		//$out = parent::___render() . "<script>CKEDITOR.replace('$this->id', config.$this->configName);</script>";
 		$this->addClass('InputfieldCKEditorNormal');
 		$this->attr('data-configName', $this->configName); 
-		$out = parent::___render() . "<script>config.InputfieldCKEditor.editors.$this->id = '$this->configName';</script>";
+		$out = parent::___render() . 
+			"<script>" . 
+			"ProcessWire.config.InputfieldCKEditor.editors.$this->id = '$this->configName';" .
+			"config.InputfieldCKEditor.editors.$this->id = '$this->configName';" . 
+			"</script>";
 		return $out; 
 	}
 
@@ -551,13 +564,14 @@ class InputfieldCKEditor extends InputfieldTextarea {
 		if(!$length) return ''; 
 
 		if($this->usePurifier && $this->wire('modules')->isInstalled('MarkupHTMLPurifier')) {
+			$enableID = stripos($this->toolbar, 'anchor') !== false || $this->isExtraAllowedContentAttribute('id');
 			if(is_null(self::$purifier)) self::$purifier = $this->wire('modules')->get('MarkupHTMLPurifier');
 			$configData = $this->wire('modules')->getModuleConfigData('ProcessPageEditLink');
 			$targets = isset($configData['targetOptions']) ? $configData['targetOptions'] : '_blank';
 			$targets = explode("\n", $targets);
-			foreach($targets as $k => $v) $targets[$k] = trim($v);
+			foreach($targets as $k => $v) $targets[$k] = trim(trim($v), '+');
 			self::$purifier->set('Attr.AllowedFrameTargets', $targets); // allow links opened in new window/tab
-			self::$purifier->set('Attr.EnableID', stripos($this->toolbar, 'anchor') !== false); // for anchor plugin use of id and name attributes
+			self::$purifier->set('Attr.EnableID', $enableID); // for anchor plugin use of id and name attributes
 			$value = self::$purifier->purify($value); 
 			// $newLength = strlen($value);
 			// if($length != $newLength) $this->message("HTML Purifier: $this->name (before: $length bytes, after: $newLength bytes)", Notice::debug);
@@ -587,6 +601,9 @@ class InputfieldCKEditor extends InputfieldTextarea {
 				$value = str_replace("\xc2\xa0",' ', $value);
 			}
 		}
+	
+		// remove UTF-8 line separator characters
+		$value = str_replace($this->wire('sanitizer')->unentities('&#8232;'), '', $value);
 
 		return $value; 
 	}
@@ -691,6 +708,32 @@ class InputfieldCKEditor extends InputfieldTextarea {
 		if($data === false || is_null($data)) return false; 
 		if(is_string($returnType)) $data = trim(wireEncodeJSON($data, true, true), "{}\r\n "); 
 		return $data; 
+	}
+
+	/**
+	 * Is the given attribute present for any tag in the extraAllowedContent?
+	 *
+	 * @param string $attr
+	 * @param string $type One of 'attribute', 'class' or 'style' (default='attribute')
+	 * @return bool
+	 *
+	 */
+	protected function isExtraAllowedContentAttribute($attr, $type = 'attribute') {
+		$types = array(
+			'attribute' => array('[', ']'),
+			'class' => array('(', ')'),
+			'style' => array('{', '}'),
+		);
+		$is = false;
+		list($open, $close) = $types[$type];
+		foreach(explode($open, str_replace(array(' ', '!'), '', $this->extraAllowedContent)) as $attrs) {
+			list($attrs,) = explode($close, $attrs, 2);
+			$attrs = explode(',', $attrs);
+			if(!in_array($attr, $attrs)) continue;
+			$is = true;
+			break;
+		}
+		return $is;
 	}
 
 	/*

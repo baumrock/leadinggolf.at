@@ -7,6 +7,22 @@
  * Additional code in comments.js and comments.css accompanies this.
  *
  * Copyright 2016 by Ryan Cramer for ProcessWire
+ * 
+ * @property int $numStars Max number of stars
+ * @property string $star Default star output (can be overridden with HTML)
+ * @property string $starOn Optionally use this star/HTML for ON state
+ * @property string $starOff Optionally use this star/HTML for OFF state
+ * @property string $starClass Class for stars whether on or off
+ * @property string $starOnClass Class for active/on stars
+ * @property string $starOffClass Class for inactive/off stars
+ * @property string $starPartialClass Class for partial (half lit star)
+ * @property string $wrapClass Wrapping element class, required for JS and CSS
+ * @property string $wrapClassInput Wrapping input element class, required for JS and CSS
+ * @property string $countClass Class used for the renderCount() method
+ * @property string $detailsLabel Star details label
+ * @property string $countLabelSingular Single count label
+ * @property string $countLabelPlural Plural count label
+ * @property string $unratedLabel Unrated label
  *
  */
 
@@ -17,6 +33,7 @@ class CommentStars extends WireData {
 		'star' => '★', // this may be overridden with HTML (icons for instance)
 		'starOn' => '', // optionally use separate star for ON...
 		'starOff' => '', // ...and OFF
+		'starClass' => 'CommentStar', // applies to both on and off
 		'starOnClass' => 'CommentStarOn', // class assigned to active/on stars
 		'starOffClass' => 'CommentStarOff', // class assigned to inactive/off stars
 		'starPartialClass' => 'CommentStarPartial',
@@ -32,16 +49,14 @@ class CommentStars extends WireData {
 	/**
 	 * Construct comment stars
 	 *
-	 * @param int $numStars Number of stars max (default=5)
-	 *
 	 */
 	public function __construct() {
 		foreach(self::$defaults as $key => $value) {
 			$this->set($key, $value);
 		}
-		$this->set('countLabelSingular', $this->_('%1$s (%2$s rating)'));
-		$this->set('countLabelPlural', $this->_('%1$s (%2$s ratings)'));
-		$this->set('unratedLabel', $this->_('not yet rated'));
+		if(!strlen($this->countLabelSingular)) $this->set('countLabelSingular', $this->_('%1$s (%2$s rating)'));
+		if(!strlen($this->countLabelPlural)) $this->set('countLabelPlural', $this->_('%1$s (%2$s ratings)'));
+		if(!strlen($this->unratedLabel)) $this->set('unratedLabel', $this->_('not yet rated'));
 	}
 
 	/**
@@ -73,39 +88,42 @@ class CommentStars extends WireData {
 		$class = $allowInput ? "$this->wrapClass $this->wrapClassInput" : $this->wrapClass;
 		if(!$this->starOn) $this->starOn = $this->star;
 		if(!$this->starOff) $this->starOff = $this->star;
-		$star = $this->starOff;
 
 		if($allowInput) {
-			$attr = " data-onclass='$this->starOnClass'";
+			$attr = "data-onclass='$this->starOnClass' data-offclass='$this->starOffClass'";
 			if($this->starOn !== $this->starOff) $attr .= " " .
-				"data-on='" . htmlspecialchars($starOn, ENT_QUOTES, 'UTF-8') . "' " .
-				"data-off='" . htmlspecialchars($starOff, ENT_QUOTES, 'UTF-8') . "'";
+				"data-on='" . htmlspecialchars($this->starOn, ENT_QUOTES, 'UTF-8') . "' " .
+				"data-off='" . htmlspecialchars($this->starOff, ENT_QUOTES, 'UTF-8') . "'";
 		} else {
 			$attr = '';
 		}
 
-		$out = "<span class='$class'$attr>";
+		$out = "<span class='$class' $attr>";
 
 		for($n = 1; $n <= $this->numStars; $n++) {
 			if($n <= $stars) {
 				// full star on
 				$star = $this->starOn;
-				$attr = " class='$this->starOnClass'";
+				$attr = "class='$this->starClass $this->starOnClass'";
 			} else if(is_float($stars) && $n > $stars && $n < $stars + 1) {
 				// partial star on
-				$star = "<span class='$this->starOffClass'>$this->starOff</span>";
+				$star = "<span class='$this->starClass $this->starOffClass'>$this->starOff</span>";
 				if(preg_match('/^\d+[^\d]+(\d+)$/', round($stars, 2), $matches)) {
 					if(strlen($matches[1]) == 1) $matches[1] .= '0';
-					$star .= "<span class='$this->starOnClass' style='width:$matches[1]%;'>$this->starOn</span>";
+					$star .= "<span class='$this->starClass $this->starOnClass' style='width:$matches[1]%;'>$this->starOn</span>";
 				}
-				$attr = " class='$this->starPartialClass'";
+				$attr = "class='$this->starClass $this->starPartialClass'";
 			} else {
 				// star off
-				$attr = " class='$this->starOffClass'";
+				$attr = "class='$this->starClass $this->starOffClass'";
 				$star = $this->starOff;
-				$attr = "";
 			}
-			$out .= "<span$attr data-value='$n'>$star</span>";
+			if($allowInput) {
+				// add tooltip indicating number of stars
+				$starChars = "$n: " . str_repeat('★ ', $n);
+				$attr .= " title='$starChars'";
+			}
+			$out .= "<span $attr data-value='$n'>$star</span>";
 		}
 
 		$out .= "</span>";

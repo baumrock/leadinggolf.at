@@ -3,9 +3,23 @@
 /**
  * ProcessWire Pages Names
  *
- * ProcessWire 3.x, Copyright 2018 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
  * https://processwire.com
+ * 
+ * #pw-summary This class includes methods for generating and modifying page names.
+ * #pw-body = 
+ * While these methods are mosty for internal core use, some may at times be useful from the public API as well.
+ * You can access methods from this class via the Pages API variable at `$pages->names()`.
+ * ~~~~~
+ * if($pages->names()->pageNameExists('something')) {
+ *   // A page named “something” exists
+ * }
  *
+ * // generate a globally unique random page name 
+ * $name = $pages->names()->uniqueRandomPageName();
+ * ~~~~~
+ * #pw-body
+ * 
  */ 
 
 class PagesNames extends Wire {
@@ -66,10 +80,11 @@ class PagesNames extends Wire {
 	/**
 	 * Assign a name to given Page (if it doesn’t already have one)
 	 * 
-	 * @param Page $page
-	 * @param string $format
+	 * #pw-group-manipulators
+	 * 
+	 * @param Page $page Page to setup a new name for
+	 * @param string $format Optional format string to use for name
 	 * @return string Returns page name that was assigned
-	 * @throws WireException
 	 * 
 	 */
 	public function setupNewPageName(Page $page, $format = '') {
@@ -100,6 +115,8 @@ class PagesNames extends Wire {
 	/**
 	 * Does the given page have an auto-generated name (during this request)?
 	 * 
+	 * #pw-group-informational
+	 * 
 	 * @param Page $page
 	 * @return string|bool Returns auto-generated name if present, or boolean false if not
 	 * 
@@ -111,7 +128,24 @@ class PagesNames extends Wire {
 	}
 
 	/**
-	 * Is given page name an untitled page name?
+	 * Does the given page have a modified “name” during this request?
+	 * 
+	 * #pw-group-informational
+	 * 
+	 * @param Page $page
+	 * @param bool|null $set Specify boolean true or false to set whether or not it has an adjusted name, or omit just to get
+	 * @return bool
+	 * 
+	 */
+	public function hasAdjustedName(Page $page, $set = null) {
+		if(is_bool($set)) $page->setQuietly('_hasAdjustedName', $set);
+		return $page->get('_hasAdjustedName') ? true : false;
+	}
+
+	/**
+	 * Does the given page have an untitled page name?
+	 * 
+	 * #pw-group-informational
 	 * 
 	 * @param string $name
 	 * @return bool
@@ -127,6 +161,8 @@ class PagesNames extends Wire {
 	 * 
 	 * Returns array like `[ 'name', 123 ]` where `name` is name without the suffix, and `123` is the numbered suffix.
 	 * If the name did not have a numbered suffix, then the 123 will be 0 and `name` will be the given `$name`.
+	 * 
+	 * #pw-group-informational
 	 * 
 	 * @param string $name
 	 * @param string $delimiter Character(s) that separate name and numbered suffix
@@ -147,6 +183,8 @@ class PagesNames extends Wire {
 	/**
 	 * Does the given name or Page have a number suffix? Returns the number if yes, or false if not
 	 * 
+	 * #pw-group-informational
+	 * 
 	 * @param string|Page $name
 	 * @param bool $getNamePrefix Return the name prefix rather than the number suffix? (default=false)
 	 * @return int|bool|string Returns false if no number suffix, or int for number suffix or string for name prefix (if requested)
@@ -161,6 +199,8 @@ class PagesNames extends Wire {
 
 	/**
 	 * Get the name format string that should be used for given $page if no name was assigned
+	 * 
+	 * #pw-group-informational
 	 * 
 	 * @param Page $page
 	 * @param array $options
@@ -231,6 +271,8 @@ class PagesNames extends Wire {
 	 *
 	 * For formats above that accept a wireDate() format, see `WireDateTime::date()` method for format details. It accepts PHP
 	 * date() format, PHP strftime() format, as well as some other predefined options.
+	 * 
+	 * #pw-group-generators
 	 *
 	 * @param Page $page
 	 * @param string|array $format Optional format. If not specified, pulls from $page’s parent template.
@@ -252,13 +294,21 @@ class PagesNames extends Wire {
 			$format = empty($options['format']) ? '' : $options['format'];
 		}
 		
+		$languages = $this->wire()->languages;
+		$sanitizer = $this->wire()->sanitizer;
+		
 		$options = array_merge($defaults, $options);
 		if(!strlen($format)) $format = $this->defaultPageNameFormat($page);
 		$format = trim($format);
+		$formatType = '';
+		$defaultDateFormat = 'ymdHis';
 		$name = '';
 		
-		if($options['language']) {
-			$this->wire('languages')->setLanguage($options['language']);	
+		if($languages && $options['language']) {
+			$languages->setLanguage($options['language']); // receives language object, ID or name
+			$language = $languages->getLanguage(); // always gets actual Language object
+		} else {
+			$language = null;
 		}
 		
 		if($format === 'title' && !strlen(trim((string) $page->title))) {
@@ -268,6 +318,7 @@ class PagesNames extends Wire {
 		if($format === 'title') {
 			// title	
 			$name = trim((string) $page->title);
+			$formatType = 'field';
 			
 		} else if($format === 'random') {
 			// globally unique randomly generated page name
@@ -279,7 +330,7 @@ class PagesNames extends Wire {
 			
 		} else if($format === 'untitled-time') {
 			// untitled with datetime, i.e. “untitled-0yymmddhhmmss” (note leading 0 differentiates from increment)
-			$dateStr = date('ymdHis');
+			$dateStr = date($defaultDateFormat);
 			$name = $this->untitledPageName() . '-0' . $dateStr;
 
 		} else if(strpos($format, '}')) {
@@ -289,37 +340,65 @@ class PagesNames extends Wire {
 		} else if(strpos($format, '|')) {
 			// field names separated by "|" until one matches
 			$name = $page->getUnformatted($format);
+			$formatType = 'field'; // Page::hasField() accepts pipes
 
 		} else if(strpos($format, 'date:') === 0) {
 			// specified date format
 			list(, $format) = explode('date:', $format);
 			if(empty($format)) $format = 'Y-m-d H:i:s';
 			$name = wireDate(trim($format));
+			$formatType = 'date';
 
-		} else if(strpos($format, ' ') !== false || strpos($format, '/') !== false) {
-			// date assumed when spaces or slashes present in format
+		} else if(strpos($format, ' ') !== false || strpos($format, '/') !== false || strpos($format, ':') !== false) {
+			// date assumed when spaces, slashes or colon present in format
 			$name = wireDate($format);
+			$formatType = 'date';
 
-		} else if($this->wire('sanitizer')->fieldName($format) === $format) {
+		} else if($sanitizer->fieldName($format) === $format) {
 			// single field name or predefined string
 			// this can also return null, which falls back to if() statement below
 			$name = (string) $page->getUnformatted($format);
+			$formatType = 'field';
 		}
 
 		if(!strlen($name)) {
-			// predefined string that is not a field name
-			$name = $format;
+			// requested format did not produce a page name, so now fall-back to something else.
+			// we either have a field name or some predefined string that is not a field name.
+			
+			if($formatType === 'field' && $page->hasField($format)) {
+				// format involves a field name that is valid for the page
+				
+				// restore previous language if we had set one
+				if($language) $languages->unsetLanguage();
+
+				// if requested in some other language, see if we can get it in default language
+				if($language && !$language->isDefault()) {
+					$name = $this->pageNameFromFormat($page, $format, array('language' => $languages->getDefault())); 
+				}
+
+				// fallback to untitled format if fields required are not present
+				if(!strlen($name)) {
+					$name = $this->pageNameFromFormat($page, 'untitled'); // no options intended
+				}
+
+				// return now to bypass everything that follows since we went recursive
+				return $name; 
+				
+			} else if($formatType === 'date' && $format !== $defaultDateFormat) {
+				// if given date format did not resolve to anything, try in our default date format 
+				$name = $this->pageNameFromFormat($page, $defaultDateFormat);
+				
+			} else {
+				$name = $format;
+			}
 		}
 
 		if(strlen($name) > $this->nameMaxLength) $name = $this->adjustNameLength($name);
 		
-		$utf8 = $this->wire('config')->pageNameCharset === 'UTF8';
-		$sanitizer = $this->wire('sanitizer');
+		$utf8 = $this->wire()->config->pageNameCharset === 'UTF8';
 		$name = $utf8 ? $sanitizer->pageNameUTF8($name) : $sanitizer->pageName($name, Sanitizer::translate);
 		
-		if($options['language']) {
-			$this->wire('languages')->unsetLanguage();
-		}
+		if($language) $languages->unsetLanguage();
 
 		return $name;
 	}
@@ -334,6 +413,8 @@ class PagesNames extends Wire {
 	 *
 	 * The returned value is not yet assigned to the given $page, so if it is something different than what
 	 * is already on $page, you’ll want to assign it manually after this.
+	 * 
+	 * #pw-group-generators
 	 *
 	 * @param string|Page|array $name Name to make unique
 	 *  You may optionally substitute the $page argument or $options arguments here, if that is all you need.
@@ -418,6 +499,8 @@ class PagesNames extends Wire {
 	/**
 	 * If name exceeds maxLength, truncate it, while keeping any numbered suffixes in place
 	 * 
+	 * #pw-group-manipulators
+	 * 
 	 * @param string $name
 	 * @param int $maxLength
 	 * @return string
@@ -465,6 +548,8 @@ class PagesNames extends Wire {
 	/**
 	 * Increment the suffix of a page name, or add one if not present
 	 * 
+	 * #pw-group-manipulators
+	 * 
 	 * @param string $name
 	 * @param int|null $num Number to use, or omit to determine and increment automatically
 	 * @return string
@@ -502,6 +587,8 @@ class PagesNames extends Wire {
 	 * 
 	 * If the `multilang` option is used, it checks if the page name exists in any language. 
 	 * IF the `language` option is used, it only checks that particular language (regardless of `multilang` option).
+	 * 
+	 * #pw-group-informational
 	 *
 	 * @param string $name
 	 * @param array $options
@@ -551,6 +638,7 @@ class PagesNames extends Wire {
 			$wheres[] = 'parent_id=:parent_id';
 			$binds[':parent_id'] = $parentID; 
 		}
+		
 		if($pageID) {
 			$wheres[] = 'id!=:id';
 			$binds[':id'] = $pageID;
@@ -572,6 +660,8 @@ class PagesNames extends Wire {
 
 	/**
 	 * Get a random, globally unique page name
+	 * 
+	 * #pw-group-generators
 	 *
 	 * @param array $options
 	 *  - `page` (Page): If name is or should be assigned to a Page, specify it here. (default=null)
@@ -647,11 +737,122 @@ class PagesNames extends Wire {
 	/**
 	 * Return the untitled page name string
 	 * 
+	 * #pw-group-informational
+	 * 
 	 * @return string
 	 * 
 	 */
 	public function untitledPageName() {
 		return $this->untitledPageName;
+	}
+	
+	/**
+	 * Does given page have a name that has a conflict/collision?
+	 * 
+	 * In multi-language environment this applies to default language only. 
+	 * 
+	 * #pw-group-informational
+	 * 
+	 * @param Page $page Page to check
+	 * @return string|bool Returns string with conflict reason or boolean false if no conflict
+	 * @throws WireException If given invalid $options argument
+	 * @since 3.0.127
+	 * 
+	 */
+	public function pageNameHasConflict(Page $page) {
+		
+		$reason = '';
+		$name = $page->name;
+	
+		if($this->wire('config')->pageNameCharset == 'UTF8') {
+			$name = $this->wire('sanitizer')->pageName($name, Sanitizer::toAscii);
+		}
+		
+		$sql = "SELECT id, status, parent_id FROM pages WHERE name=:name AND id!=:id";
+		$query = $this->wire('database')->prepare($sql);
+		$query->bindValue(':name', $name);
+		$query->bindValue(':id', $page->id, \PDO::PARAM_INT);
+		$query->execute();
+		
+		if(!$query->rowCount()) {
+			$query->closeCursor();
+			return false;
+		}
+		
+		while($row = $query->fetch(\PDO::FETCH_ASSOC)) {
+			if($row['status'] & Page::statusUnique) {
+				// name is already required to be unique globally
+				$reason = sprintf($this->_("Another page is using name “%s” and requires it to be globally unique"), $page->name);
+			}
+			if((int) $row['parent_id'] === $page->parent_id) {
+				// name already consumed by another page with same parent
+				$reason = sprintf($this->_('Another page with same parent is already using name “%s”'), $page->name);
+			}
+			if($reason) break;
+		}
+		
+		// page requires that it be the only one with this name, so if others have it, then disallow
+		if(!$reason && $page->hasStatus(Page::statusUnique)) {
+			$reason = sprintf($this->_('Cannot use name “%s” as globally unique because it is already used by other page(s)'), $page->name);
+		}
+		
+		$query->closeCursor();
+		
+		return $reason ? $reason : false;
+	}
+
+	/**
+	 * Check given page’s name for conflicts and increment as needed while also triggering a warning notice
+	 * 
+	 * #pw-group-manipulators
+	 * 
+	 * @param Page $page
+	 * @since 3.0.127
+	 * 
+	 */
+	public function checkNameConflicts(Page $page) {
+		
+		$checkName = false;
+		$checkStatus = false;
+		$namePrevious = $page->namePrevious;
+		$statusPrevious = $page->statusPrevious;
+		$isNew = $page->isNew();
+		$nameChanged = !$isNew && $namePrevious !== null && $namePrevious !== $page->name;
+
+		if($isNew || $nameChanged) {
+			// new page or changed name
+			$checkName = true;
+		} else if($statusPrevious !== null && $page->hasStatus(Page::statusUnique) && !($statusPrevious & Page::statusUnique)) {
+			// page just received 'unique' status
+			$checkStatus = true;
+		}
+		
+		if(!$checkName && !$checkStatus) return;
+	
+		do {
+			
+			$conflict = $this->pageNameHasConflict($page);
+			if(!$conflict) break;
+			
+			$this->warning($conflict);
+			
+			if($checkName) {
+				if($nameChanged) {
+					// restore previous name
+					$page->name = $page->namePrevious;
+					$nameChanged = false;
+				} else {
+					// increment name
+					$page->name = $this->incrementName($page->name);
+				}
+				
+			} else if($checkStatus) {
+				// remove 'unique' status
+				$page->removeStatus(Page::statusUnique);
+				break;
+			}
+			
+		} while($conflict);
 	}
 	
 }

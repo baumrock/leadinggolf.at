@@ -3,7 +3,9 @@
 /**
  * ProcessWire Fieldgroups
  *
- * Maintains collections of Fieldgroup instances. 
+ * #pw-summary Maintains collections of Fieldgroup object instances and represents the `$fieldgroups` API variable.
+ * #pw-body For full details on all methods available in a Fieldgroup, be sure to also see the `WireArray` class.
+ * #pw-var $fieldgroups
  * 
  * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
  * https://processwire.com
@@ -465,14 +467,19 @@ class Fieldgroups extends WireSaveableItemsLookup {
 		if(is_null($template)) $template = $this->wire('templates')->get($fieldgroup->name);
 
 		if(($field->flags & Field::flagGlobal) && (!$template || !$template->noGlobal)) {
-			return
-				"Field '$field' may not be removed from fieldgroup '{$this->name}' " . 
-				"because it is globally required (Field::flagGlobal).";
+			if($template && $template->getConnectedField()) {
+				// if template has a 1-1 relationship with a field, noGlobal is not enforced
+				return false;
+			} else {
+				return
+					"Field '$field' may not be removed from fieldgroup '$fieldgroup->name' " .
+					"because it is globally required (Field::flagGlobal).";
+			}
 		}
 
 		if($field->flags & Field::flagPermanent) {
 			return 
-				"Field '$field' may not be removed from fieldgroup '{$this->name}' " . 
+				"Field '$field' may not be removed from fieldgroup '$fieldgroup->name' " . 
 				"because it is permanent (Field::flagPermanent).";
 		}
 

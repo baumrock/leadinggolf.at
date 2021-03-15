@@ -3,7 +3,7 @@
 /**
  * ProcessWire WireMail
  * 
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
  * https://processwire.com
  * 
  * #pw-summary A module type that handles sending of email in ProcessWire
@@ -51,6 +51,9 @@
  * #pw-body
  * 
  * @method int send() Send email. 
+ * @method string htmlToText($html) Convert HTML email body to TEXT email body. 
+ * @method string sanitizeHeaderName($name) #pw-internal
+ * @method string sanitizeHeaderValue($value) #pw-internal
  * 
  * @property array $to To email address.
  * @property array $toName Optional person’s name to accompany “to” email address
@@ -65,6 +68,8 @@
  * @property array $headers Alias of $header
  * @property array $param Associative array of aditional params (likely not applicable to most WireMail modules). 
  * @property array $attachments Array of file attachments (if populated and where supported) #pw-advanced
+ * @property string $newline Newline character, populated only if different from CRLF. #pw-advanced
+ * 
  *
  */
 
@@ -89,17 +94,37 @@ class WireMail extends WireData implements WireMailInterface {
 		'attachments' => array(), 
 		);
 
+	/**
+	 * Construct
+	 * 
+	 */
 	public function __construct() {
 		$this->mail['header']['X-Mailer'] = "ProcessWire/" . $this->className();
 		parent::__construct();
 	}
 
+	/**
+	 * Get property
+	 * 
+	 * @param string $key
+	 * @return mixed|null
+	 * 
+	 */
 	public function get($key) {
 		if($key === 'headers') $key = 'header';
 		if(array_key_exists($key, $this->mail)) return $this->mail[$key]; 
 		return parent::get($key);
 	}
-	
+
+	/**
+	 * Set property
+	 * 
+	 * @param string $key
+	 * @param mixed $value
+	 *
+	 * @return $this|WireData
+	 * 
+	 */
 	public function set($key, $value) {
 		if($key === 'headers' || $key === 'header') {
 			if(is_array($value)) $this->headers($value); 
@@ -115,7 +140,7 @@ class WireMail extends WireData implements WireMailInterface {
 	public function __set($key, $value) { return $this->set($key, $value); }
 
 	/**
-	 * Sanitize an email address or throw WireException if invalid
+	 * Sanitize an email address or throw WireException if invalid or in blacklist
 	 * 
 	 * @param string $email
 	 * @return string
@@ -123,24 +148,66 @@ class WireMail extends WireData implements WireMailInterface {
 	 * 
 	 */
 	protected function sanitizeEmail($email) {
+		if(!strlen($email)) return '';
 		$email = strtolower(trim($email)); 
+		if(strpos($email, ':') && preg_match('/^(.+):\d+$/', $email, $matches)) {
+			// sending email in particular might sometimes be auto-generated from hostname
+			// so remove trailing port, i.e. ':8888', if present since it will not validate
+			$email = $matches[1]; 
+		}
 		$clean = $this->wire('sanitizer')->email($email); 
-		if($email != $clean) {
-			$clean = $this->wire('sanitizer')->entities($email); 
-			throw new WireException("Invalid email address ($clean)");
+		if($email !== $clean) {
+			throw new WireException("Invalid email address: " . $this->wire('sanitizer')->entities($email));
+		}
+		/** @var WireMailTools $mail */
+		$mail = $this->wire('mail');
+		if($mail && $mail->isBlacklistEmail($email)) {
+			throw new WireException("Email address not allowed: " . $this->wire('sanitizer')->entities($email));
 		}
 		return $clean;
 	}
 
 	/**
-	 * Sanitize string for use in a email header
+	 * Sanitize and normalize a header name
+	 *
+	 * @param string $name
+	 * @return string
+	 * @since 3.0.132
+	 *
+	 */
+	protected function ___sanitizeHeaderName($name) {
+		/** @var Sanitizer $sanitizer */
+		$sanitizer = $this->wire('sanitizer');
+		$name = $sanitizer->emailHeader($name, true);
+		// ensure consistent capitalization for header names
+		$name = ucwords(str_replace('-', ' ', $name));
+		$name = str_replace(' ', '-', $name);
+		return $name;
+	}
+
+	/**
+	 * Sanitize an email header header value
+	 *
+	 * @param string $value
+	 * @return string
+	 * @since 3.0.132
+	 *
+	 */
+	protected function ___sanitizeHeaderValue($value) {
+		return $this->wire('sanitizer')->emailHeader($value); 
+	}
+
+	/**
+	 * Alias of sanitizeHeaderValue() method for backwards compatibility
 	 * 
+	 * #pw-internal
+	 *
 	 * @param string $header
 	 * @return string
-	 * 
+	 *
 	 */
 	protected function sanitizeHeader($header) {
-		return $this->wire('sanitizer')->emailHeader($header); 
+		return $this->sanitizeHeaderValue($header);
 	}
 
 	/**
@@ -155,7 +222,7 @@ class WireMail extends WireData implements WireMailInterface {
 		if(strpos($email, '<') !== false && strpos($email, '>') !== false) {
 			// email has separate from name and email
 			if(preg_match('/^(.*?)<([^>]+)>.*$/', $email, $matches)) {
-				$name = $this->sanitizeHeader($matches[1]);
+				$name = $this->sanitizeHeaderValue($matches[1]);
 				$email = $matches[2]; 
 			}
 		}
@@ -176,7 +243,7 @@ class WireMail extends WireData implements WireMailInterface {
 	protected function bundleEmailAndName($email, $name) {
 		$email = $this->sanitizeEmail($email); 
 		if(!strlen($name)) return $email;
-		$name = $this->sanitizeHeader($name); 
+		$name = $this->sanitizeHeaderValue($name); 
 		$delim = '';
 		if(strpos($name, ',') !== false) {
 			// name contains a comma, so quote the value
@@ -202,7 +269,7 @@ class WireMail extends WireData implements WireMailInterface {
 	 * @param string $name Optionally provide a TO name, applicable
 	 *	only when specifying #1 (single email) for the first argument. 
 	 * @return $this 
-	 * @throws WireException if any provided emails were invalid
+	 * @throws WireException if any provided emails were invalid or in blacklist
 	 *
 	 */
 	public function to($email = null, $name = null) {
@@ -236,8 +303,10 @@ class WireMail extends WireData implements WireMailInterface {
 
 			if(empty($toName)) $toName = $name; // use function arg if not overwritten
 			$toEmail = $this->sanitizeEmail($toEmail); 
-			$this->mail['to'][$toEmail] = $toEmail;
-			$this->mail['toName'][$toEmail] = $this->sanitizeHeader($toName); 
+			if(strlen($toEmail)) {
+				$this->mail['to'][$toEmail] = $toEmail;
+				$this->mail['toName'][$toEmail] = $this->sanitizeHeaderValue($toName);
+			}
 		}
 
 		return $this; 
@@ -260,7 +329,7 @@ class WireMail extends WireData implements WireMailInterface {
 		$emails = $this->mail['to']; 
 		if(!count($emails)) throw new WireException("Please set a 'to' address before setting a name."); 
 		$email = end($emails); 
-		$this->mail['toName'][$email] = $this->sanitizeHeader($name); 
+		$this->mail['toName'][$email] = $this->sanitizeHeaderValue($name); 
 		return $this;
 	}
 
@@ -270,7 +339,7 @@ class WireMail extends WireData implements WireMailInterface {
 	 * @param string $email Must be a single email address or "User Name <user@example.com>" string.
 	 * @param string|null An optional FROM name (same as setting/calling fromName)
 	 * @return $this 
-	 * @throws WireException if provided email was invalid
+	 * @throws WireException if provided email was invalid or in blacklist
 	 *
 	 */
 	public function from($email, $name = null) {
@@ -295,7 +364,7 @@ class WireMail extends WireData implements WireMailInterface {
 	 *
 	 */
 	public function fromName($name) {
-		$this->mail['fromName'] = $this->sanitizeHeader($name); 
+		$this->mail['fromName'] = $this->sanitizeHeaderValue($name); 
 		return $this; 
 	}
 
@@ -305,7 +374,7 @@ class WireMail extends WireData implements WireMailInterface {
 	 * @param string $email Must be a single email address or "User Name <user@example.com>" string.
 	 * @param string|null An optional Reply-To name (same as setting/calling replyToName method)
 	 * @return $this
-	 * @throws WireException if provided email was invalid
+	 * @throws WireException if provided email was invalid or in blacklist
 	 *
 	 */
 	public function replyTo($email, $name = null) {
@@ -314,9 +383,9 @@ class WireMail extends WireData implements WireMailInterface {
 		} else {
 			$email = $this->sanitizeEmail($email);
 		}
-		if($name) $this->mail['replyToName'] = $this->sanitizeHeader($name); 
+		if($name) $this->mail['replyToName'] = $this->sanitizeHeaderValue($name); 
 		$this->mail['replyTo'] = $email;
-		if(empty($name)) $name = $this->mail['replyToName']; 
+		if(empty($name) && !empty($this->mail['replyToName'])) $name = $this->mail['replyToName']; 
 		if(strlen($name)) $email = $this->bundleEmailAndName($email, $name); 
 		$this->header('Reply-To', $email); 
 		return $this; 
@@ -331,7 +400,7 @@ class WireMail extends WireData implements WireMailInterface {
 	 */
 	public function replyToName($name) {
 		if(strlen($this->mail['replyTo'])) return $this->replyTo($this->mail['replyTo'], $name); 
-		$this->mail['replyToName'] = $this->sanitizeHeader($name);
+		$this->mail['replyToName'] = $this->sanitizeHeaderValue($name);
 		return $this; 
 	}
 
@@ -343,7 +412,7 @@ class WireMail extends WireData implements WireMailInterface {
 	 *
 	 */
 	public function subject($subject) {
-		$this->mail['subject'] = $this->sanitizeHeader($subject); 	
+		$this->mail['subject'] = $this->sanitizeHeaderValue($subject); 	
 		return $this; 
 	}
 
@@ -401,15 +470,13 @@ class WireMail extends WireData implements WireMailInterface {
 			if(is_array($key)) {
 				$this->headers($key);
 			} else {
+				$key = $this->sanitizeHeaderName($key);
 				unset($this->mail['header'][$key]);
 			}
-		} else { 
-			$k = $this->wire('sanitizer')->name($this->sanitizeHeader($key)); 
-			// ensure consistent capitalization for all header keys
-			$k = ucwords(str_replace('-', ' ', $k)); 
-			$k = str_replace(' ', '-', $k); 
-			$v = $this->sanitizeHeader($value); 
-			$this->mail['header'][$k] = $v; 
+		} else {
+			$key = $this->sanitizeHeaderName($key);
+			$value = $this->sanitizeHeaderValue($value); 
+			if(strlen($key)) $this->mail['header'][$key] = $value; 
 		}
 		return $this; 
 	}
@@ -488,98 +555,62 @@ class WireMail extends WireData implements WireMailInterface {
 	}
 
 	/**
+	 * Get the multipart boundary string for this email
+	 * 
+	 * @param string|bool $prefix Specify optional boundary prefix or boolean true to clear any existing stored boundary
+	 * @return string
+	 * 
+	 */
+	protected function multipartBoundary($prefix = '') {
+		$boundary = parent::get('_multipartBoundary');
+		if(empty($boundary) || $prefix === true) {
+			$boundary = "==Multipart_Boundary_x" . md5(time()) . "x";
+			parent::set('_multipartBoundary', $boundary);
+		}
+		if(is_string($prefix) && !empty($prefix)) {
+			$boundary = str_replace("_Boundary_x", "_Boundary_{$prefix}_x", $boundary);
+		}
+		return $boundary;
+	}
+	
+	/**
 	 * Send the email
 	 *
 	 * Call this method only after you have specified at least the `subject`, `to` and `body`.
-	 * 
+	 *
 	 * #pw-notes This is the primary method that modules extending this class would want to replace.
 	 *
-	 * @return int Returns a positive number (indicating number of addresses emailed) or 0 on failure. 
+	 * @return int Returns a positive number (indicating number of addresses emailed) or 0 on failure.
 	 *
 	 */
 	public function ___send() {
 
-		$from = $this->from;
-		if(!strlen($from)) $from = $this->wire('config')->adminEmail;
-		if(!strlen($from)) $from = 'processwire@' . $this->wire('config')->httpHost; 
+		// prep header and body
+		$this->multipartBoundary(true);
+		$header = $this->renderMailHeader();
+		$body = $this->renderMailBody();
 
-		$header = "From: " . ($this->fromName ? $this->bundleEmailAndName($from, $this->fromName) : $from);
-
-		foreach($this->header as $key => $value) $header .= "\r\n$key: $value";
-
+		// adjust for the cases where people want to change RFC standard \r\n to just \n
+		$newline = parent::get('newline');
+		if(is_string($newline) && strlen($newline) && $newline !== "\r\n") {
+			$body = str_replace("\r\n", $newline, $body);
+			$header = str_replace("\r\n", $newline, $header);
+		}
+		
+		// prep any additional PHP mail params
 		$param = $this->wire('config')->phpMailAdditionalParameters;
 		if(is_null($param)) $param = '';
-		foreach($this->param as $value) $param .= " $value";		
-
-		$header = trim($header); 
-		$param = trim($param); 
-		$text = $this->body; 
-		$html = $this->bodyHTML;
-
-		if($this->bodyHTML || count($this->attachments)) {
-			if(!strlen($text)) $text = strip_tags($html); 
-			$contentType = count($this->attachments) ? 'multipart/mixed' : 'multipart/alternative';
-			$boundary = "==Multipart_Boundary_x" . md5(time()) . "x";
-			$header .= "\r\nMIME-Version: 1.0";
-			$header .= "\r\nContent-Type: $contentType;\r\n  boundary=\"$boundary\"";
-
-			// Plain Text
-			$body = "This is a multi-part message in MIME format.\r\n\r\n" . 
-				"--$boundary\r\n";
-				
-			$textbody = "Content-Type: text/plain; charset=\"utf-8\"\r\n" . 
-				"Content-Transfer-Encoding: quoted-printable\r\n\r\n" . 
-				quoted_printable_encode($text) . "\r\n\r\n";
-
-			// HTML
-			if($this->bodyHTML){
-				$htmlbody = "Content-Type: text/html; charset=\"utf-8\"\r\n" . 
-					"Content-Transfer-Encoding: quoted-printable\r\n\r\n" . 
-					quoted_printable_encode($html) . "\r\n\r\n";
-				
-				if(count($this->attachments)) {
-					$subboundary = "==Multipart_Boundary_alt_x" . md5(time()) . "x";
-					
-					$body .= "Content-Type: multipart/alternative;\r\n	boundary=\"$subboundary\"\r\n\r\n" .
-						"--$subboundary\r\n" .
-						$textbody .
-						"--$subboundary\r\n" .
-						$htmlbody .
-						"--$subboundary--\r\n\r\n";
-				} else {
-					$body .= $textbody .
-						"--$boundary\r\n" .
-						$htmlbody;
-				}
-			} else {
-				$body .= $textbody;
-			}
-
-			// Attachments
-			foreach($this->attachments as $filename => $file) {
-				$content = file_get_contents($file);
-				$content = chunk_split(base64_encode($content));
-
-				$body .= "--$boundary\r\n" .
-					"Content-Type: application/octet-stream; name=\"$filename\"\r\n" . 
-					"Content-Transfer-Encoding: base64\r\n" . 
-					"Content-Disposition: attachment; filename=\"$filename\"\r\n\r\n" .
-					"$content\r\n\r\n";
-			}
-
-			$body .= "--$boundary--\r\n";
-
-		} else {
-			$header .= "\r\nContent-Type: text/plain; charset=UTF-8\r\n" .
-				"Content-Transfer-Encoding: quoted-printable"; 
-			$body = quoted_printable_encode($text); 
+		foreach($this->param as $value) {
+			$param .= " $value";
 		}
 
+		// send email(s)
 		$numSent = 0;
+		$subject = $this->encodeSubject($this->subject);
+		
 		foreach($this->to as $to) {
-			$toName = $this->mail['toName'][$to]; 
-			if($toName) $to = $this->bundleEmailAndName($to, $toName); // bundle to "User Name <user@example.com"
-			$subject = $this->encodeSubject($this->subject);
+			$toName = isset($this->mail['toName'][$to]) ? $this->mail['toName'][$to] : '';
+			if($toName) $to = $this->bundleEmailAndName($to, $toName); // bundle to "User Name <user@example.com>"
 			if($param) {
 				if(@mail($to, $subject, $body, $header, $param)) $numSent++;
 			} else {
@@ -587,7 +618,191 @@ class WireMail extends WireData implements WireMailInterface {
 			}
 		}
 
-		return $numSent; 
+		return $numSent;
+	}
+
+	/**
+	 * Render email header string
+	 * 
+	 * @return string
+	 * 
+	 */
+	protected function renderMailHeader() {
+		
+		$from = $this->from;
+		if(!strlen($from)) $from = $this->wire('config')->adminEmail;
+		if(!strlen($from)) $from = 'processwire@' . $this->wire('config')->httpHost;
+
+		$header = "From: " . ($this->fromName ? $this->bundleEmailAndName($from, $this->fromName) : $from);
+
+		foreach($this->header as $key => $value) {
+			$header .= "\r\n$key: $value";
+		}
+		
+		$boundary = $this->multipartBoundary();
+		$header = trim($this->strReplace($header, $boundary)); 
+		
+		if($this->bodyHTML || count($this->attachments)) {
+			$contentType = count($this->attachments) ? 'multipart/mixed' : 'multipart/alternative';
+			$header .= 
+				"\r\nMIME-Version: 1.0" . 
+				"\r\nContent-Type: $contentType;\r\n  boundary=\"$boundary\"";
+		} else {
+			$header .= 
+				"\r\nContent-Type: text/plain; charset=UTF-8" .
+				"\r\nContent-Transfer-Encoding: quoted-printable"; 
+		}
+		
+		return $header;
+	}
+
+	/**
+	 * Render mail body 
+	 * 
+	 * @return string
+	 * 
+	 */
+	protected function renderMailBody() {
+		
+		$boundary = $this->multipartBoundary(); 
+		$subboundary = $this->multipartBoundary('alt');
+	
+		// don’t allow boundary to appear in visible portions of email
+		$text = $this->strReplace($this->body, array($boundary, $subboundary)); 
+		$html = $this->strReplace($this->bodyHTML, array($boundary, $subboundary));
+
+		// if plain text only, return now
+		if(empty($html) && !count($this->attachments)) return quoted_printable_encode($text);
+
+		// if only HTML provided, generate text version from HTML
+		if(!strlen($text) && strlen($html)) $text = $this->htmlToText($html);
+
+		$body = 
+			"This is a multi-part message in MIME format.\r\n\r\n" .
+			"--$boundary\r\n";
+
+		// Plain Text
+		$textbody = 
+			"Content-Type: text/plain; charset=\"utf-8\"\r\n" .
+			"Content-Transfer-Encoding: quoted-printable\r\n\r\n" .
+			quoted_printable_encode($text) . "\r\n\r\n";
+
+		if($this->bodyHTML) {
+			// HTML
+			$htmlbody = 
+				"Content-Type: text/html; charset=\"utf-8\"\r\n" .
+				"Content-Transfer-Encoding: quoted-printable\r\n\r\n" .
+				quoted_printable_encode($html) . "\r\n\r\n";
+
+			if(count($this->attachments)) {
+				// file attachments
+				$textbody = $this->strReplace($textbody, $subboundary);
+				$htmlbody = $this->strReplace($htmlbody, $subboundary);
+
+				$body .= 
+					"Content-Type: multipart/alternative;\r\n	boundary=\"$subboundary\"\r\n\r\n" .
+					"--$subboundary\r\n" .
+					$textbody .
+					"--$subboundary\r\n" .
+					$htmlbody .
+					"--$subboundary--\r\n\r\n";
+				
+			} else {
+				// no file attachments
+				$body .= 
+					$textbody .
+					"--$boundary\r\n" .
+					$htmlbody;
+			}
+			
+		} else {
+			// plain text
+			$body .= $textbody;
+		}
+
+		if(count($this->attachments)) {
+			$body .= $this->renderMailAttachments(); 
+		}
+
+		$body .= "--$boundary--\r\n";
+
+		return $body;
+	}	
+	
+	/**
+	 * Render mail attachments string for placement in body
+	 * 
+	 * @return string
+	 * 
+	 */
+	protected function renderMailAttachments() {
+		$body = '';
+		$boundary = $this->multipartBoundary();
+		
+		foreach($this->attachments as $filename => $file) {
+			
+			$filename = $this->wire('sanitizer')->text($filename, array(
+				'maxLength' => 512,
+				'truncateTail' => false, 
+				'stripSpace' => '-',
+				'stripQuotes' => true
+			));
+			
+			if(stripos($filename, $boundary) !== false) continue;
+			
+			$content = file_get_contents($file);
+			$content = chunk_split(base64_encode($content));
+	
+			if(stripos($content, $boundary) !== false) continue;
+			
+			$body .=
+				"--$boundary\r\n" .
+				"Content-Type: application/octet-stream; name=\"$filename\"\r\n" .
+				"Content-Transfer-Encoding: base64\r\n" .
+				"Content-Disposition: attachment; filename=\"$filename\"\r\n\r\n" .
+				"$content\r\n\r\n";
+		}
+		
+		return $body;
+	}
+
+	/**
+	 * Recursive string replacement
+	 * 
+	 * This is better than using str_replace() because it handles cases where replacement
+	 * results in the construction of a new $find that was not present in original $str.
+	 * Note: this function ignores case. 
+	 * 
+	 * @param string $str
+	 * @param string|array $find
+	 * @param string $replace 
+	 * @return string
+	 * 
+	 */
+	protected function strReplace($str, $find, $replace = '') {
+		if(!is_array($find)) $find = array($find);
+		if(!is_string($str)) $str = (string) $str;
+		foreach($find as $findStr) {
+			if(is_array($findStr)) continue;
+			while(stripos($str, $findStr) !== false) {
+				$str = str_ireplace($findStr, $replace, $str);
+			}
+		}
+		return $str;
+	}
+
+	/**
+	 * Convert HTML mail body to TEXT mail body
+	 * 
+	 * @param string $html
+	 * @return string
+	 * 
+	 */
+	protected function ___htmlToText($html) {
+		$text = $this->wire('sanitizer')->getTextTools()->markupToText($html);
+		$text = str_replace("\n", "\r\n", $text); 
+		$text = $this->strReplace($text, $this->multipartBoundary()); 
+		return $text;
 	}
 	
 	/**
@@ -600,6 +815,9 @@ class WireMail extends WireData implements WireMailInterface {
 	 *
 	 */
 	public function encodeSubject($subject) {
+		
+		$boundary = $this->multipartBoundary();
+		$subject = $this->strReplace($subject, $boundary);
 		
 		if(extension_loaded("mbstring")) {
 			// Need to pass in the header name and subtract it afterwards,
@@ -672,4 +890,5 @@ class WireMail extends WireData implements WireMailInterface {
 	public function quotedPrintableString($text) {
 		return '=?utf-8?Q?' . quoted_printable_encode($text) . '?=';
 	}
+
 }

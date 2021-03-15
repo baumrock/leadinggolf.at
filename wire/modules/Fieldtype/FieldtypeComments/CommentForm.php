@@ -35,18 +35,24 @@ class CommentForm extends Wire implements CommentFormInterface {
 
 	/**
 	 * Page object where the comment is being submitted
+	 * 
+	 * @var Page
 	 *
 	 */
 	protected $page; 
 
 	/**
 	 * Reference to the Field object used by this CommentForm
+	 * 
+	 * @var CommentField
 	 *
 	 */
 	protected $commentsField; 
 
 	/**
 	 * Instance of CommentArray, containing all Comment instances for this Page
+	 * 
+	 * @var CommentArray
 	 *
 	 */
 	protected $comments;
@@ -60,7 +66,7 @@ class CommentForm extends Wire implements CommentFormInterface {
 		'email' => '',
 		'text' => '',
 		'notify' => '', 
-		); 
+	); 
 
 	protected $postedComment = null;
 
@@ -69,10 +75,10 @@ class CommentForm extends Wire implements CommentFormInterface {
 	 *
 	 */
 	protected $options = array(
-		'headline' => '',	// Post Comment
-		'successMessage' => '',	// Thank you, your submission has been saved
-		'pendingMessage' => '', // Your comment has been submitted and will appear once approved by the moderator.
-		'errorMessage' => '',	// Your submission was not saved due to one or more errors. Try again.
+		'headline' => '',	// Headline (with markup) above form, or specify false for no headline 
+		'successMessage' => '',	// Success messsage with markup. "<p>Thank you, your submission has been saved</p>"
+		'pendingMessage' => '', // Comment pending message with markup. "<p>Your comment has been submitted and will appear once approved by the moderator.</p>"
+		'errorMessage' => '',	// Error message with markup. "<p>Your submission was not saved due to one or more errors. Try again.</p>"
 		'processInput' => true, 
 		'encoding' => 'UTF-8', 
 		'attrs' => array(
@@ -82,8 +88,11 @@ class CommentForm extends Wire implements CommentFormInterface {
 			'class' => '',
 			'rows' => 5,
 			'cols' => 50,
+			'form' => '', // any extra attributes for form element
 		),
+		'inputWrapTag' => 'p', // tag that wraps label/inputs
 		'labels' => array(
+			'headline' => '', // Post Comment
 			'cite' => '',	// Your Name
 			'email' => '',	// Your E-Mail
 			'website' => '',// Website
@@ -91,7 +100,44 @@ class CommentForm extends Wire implements CommentFormInterface {
 			'text' => '',	// Comments
 			'submit' => '', // Submit
 			'starsRequired' => '', // Please select a star rating
-			),
+			'success' => '', 
+			'pending' => '',
+			'error' => '',
+			'notify' => '', // E-Mail Notifications:
+			'notifyReplies' => '', 
+			'notifyAll' => '',
+			'notifyOff' => '',
+		),
+		'classes' => array(
+			'form' => '',
+			'label' => '',
+			'labelSpan' => '',
+			'cite' => 'CommentFormCite {id}_cite',
+			'citeInput' => 'required',
+			'email' => 'CommentFormEmail {id}_email',
+			'emailInput' => 'required email',
+			'text' => 'CommentFormText {id}_text',
+			'textInput' => 'required',
+			'website' => 'CommentFormWebsite {id}_website',
+			'websiteInput' => 'website',
+			'stars' => 'CommentFormStars {id}_stars',
+			'starsRequired' => 'CommentFormStarsRequired',
+			'honeypot' => 'CommentFormHP {id}_hp',
+			'notify' => 'CommentFormNotify',
+			'radioLabel' => '',
+			'radioInput' => '',
+			'submit' => 'CommentFormSubmit {id}_submit',
+			'submitButton' => '',
+			'success' => 'success',
+			'pending' => 'pending success',
+			'error' => 'error',
+		),
+		'markup' => array(
+			'headline' => "<{tag}>{headline}</{tag}>", // feel free to replace {tag} with "h1", "h2", "h3"
+			'notification' => "<p class='{class}'><strong>{message}</strong></p>",
+			'wrapNotification' => "<div id='CommentPostNote'>{out}</div>", 
+			'wrapAll' => "<div id='{id}' class='{class}'>{headline}{note}{form}</div><!--/{id}-->",
+		),
 
 		// values that will be already set, perhaps pulled from a user profile for instance (null = ignore)
 		// note that using presets is NOT cache safe: do not use for non-logged-in users if output caches are active
@@ -100,9 +146,9 @@ class CommentForm extends Wire implements CommentFormInterface {
 			'email' => null, 
 			'website' => null,
 			'text' => null,
-			),
+		),
 
-		// whether or not eht preset values above will be changeable by the user
+		// whether or not the preset values above will be changeable by the user
 		// applies only for preset values that are not null. 
 		'presetsEditable' => false,
 
@@ -122,8 +168,11 @@ class CommentForm extends Wire implements CommentFormInterface {
 		
 		// When a comment is saved to a page, avoid updating the modified time/user
 		'quietSave' => false,
+	
+		// interial use: have options been initialized and are ready to use?
+		'_ready' => false, 
 
-		);
+	);
 
 
 	/**
@@ -137,35 +186,12 @@ class CommentForm extends Wire implements CommentFormInterface {
 	public function __construct(Page $page, CommentArray $comments, $options = array()) {
 
 		$this->page = $page;
-		$this->comments = $comments; 
-
-		// default messages
-		$h3 = $this->_('h3'); // Headline tag
-		$this->options['headline'] = "<$h3>" . $this->_('Post Comment') . "</$h3>"; // Form headline
-		$this->options['successMessage'] = "<p class='success'><strong>" . $this->_('Thank you, your submission has been saved.') . "</strong></p>"; 
-		$this->options['pendingMessage'] = "<p class='success pending'><strong>" . $this->_('Your comment has been submitted and will appear once approved by the moderator.') . "</strong></p>"; 
-		$this->options['errorMessage'] = "<p class='error'><strong>" . $this->_('Your submission was not saved due to one or more errors. Please check that you have completed all fields before submitting again.') . "</strong></p>"; 
-
-		// default labels
-		$this->options['labels']['cite'] = $this->_('Your Name'); 
-		$this->options['labels']['email'] = $this->_('Your E-Mail'); 
-		$this->options['labels']['website'] = $this->_('Your Website URL');
-		$this->options['labels']['stars'] = ''; // i.e. "Your Rating"
-		$this->options['labels']['starsRequired'] = $this->_('Please choose a star rating');
-		$this->options['labels']['text'] = $this->_('Comments'); 
-		$this->options['labels']['submit'] = $this->_('Submit'); 
-
-		if(isset($options['labels'])) {
-			$this->options['labels'] = array_merge($this->options['labels'], $options['labels']); 
-			unset($options['labels']); 
-		}
-		if(isset($options['attrs'])) {
-			$this->options['attrs'] = array_merge($this->options['attrs'], $options['attrs']); 
-			unset($options['attrs']); 
-		}
-		$this->options = array_merge($this->options, $options); 
-
+		$this->comments = $comments;
+		
 		// determine which field on the page is the commentsField and save the Field instance
+		$this->commentsField = $this->comments->getField();
+		
+		/*
 		foreach($this->wire('fields') as $field) {
 			if(!$field->type instanceof FieldtypeComments) continue; 
 			$value = $this->page->get($field->name); 
@@ -174,23 +200,251 @@ class CommentForm extends Wire implements CommentFormInterface {
 				break;
 			}
 		}
-		// populate the vlaue of redirectAfterPost
+		*/
+		
+		// populate the value of redirectAfterPost
 		if($this->commentsField && is_null($this->options['redirectAfterPost'])) {
 			$this->options['redirectAfterPost'] = (bool) $this->commentsField->redirectAfterPost;
 		}
 		if($this->commentsField && $this->commentsField->quietSave) {
 			$this->options['quietSave'] = true; 
 		}
+		
+		$this->setOptions($options);
 	}
 
+	/**
+	 * Initialize and set options
+	 * 
+	 * @param array $options
+	 * 
+	 */
+	public function setOptions(array $options) {
+	
+		if(!$this->options['_ready']) {
+			// default labels
+			$this->options['labels'] = array(
+				'headline' => '', // $this->_('Post Comment'),
+				'cite' => $this->_('Your Name'),
+				'email' => $this->_('Your E-Mail'),
+				'website' => $this->_('Your Website URL'),
+				'text' => $this->_('Comments'),
+				'submit' => $this->_('Submit'),
+				'stars' => '', // i.e. "Your Rating"
+				'starsRequired' => $this->_('Please choose a star rating'),
+				'success' => $this->_('Thank you, your submission has been saved.'),
+				'pending' => $this->_('Your comment has been submitted and will appear once approved by the moderator.'),
+				'error' => $this->_('Your submission was not saved due to one or more errors. Please check that you have completed all fields before submitting again.'),
+				'notify' => $this->_('E-Mail Notifications:'), 
+				'notifyReplies' => $this->_('Replies'), 
+				'notifyAll' => $this->_('All'), 
+				'notifyOff' => $this->_('Off'),
+			);
+		}
+
+		// if request URL does not end with a slash, use the page URL as default action attribute
+		if(substr($this->wire('input')->url(), -1) != '/') {
+			$this->options['attrs']['action'] = $this->page->url;
+		}
+
+		// merge any user supplied array-based options to overwrite defaults
+		foreach(array('labels', 'attrs', 'classes', 'markup', 'presets') as $key) {
+			if(!isset($options[$key])) continue;
+			$this->options[$key] = array_merge($this->options[$key], $options[$key]);
+			unset($options[$key]);
+		}
+
+		// merge user supplied options with defaults
+		$this->options = array_merge($this->options, $options);
+		$options = &$this->options;
+
+		// default headline
+		$headline = $options['headline'];
+		$headlineLabel = $options['labels']['headline'];
+		if($headline && strpos($headline, '</') === false) {
+			// headline present but has no markup, so we will treat it as a non-markup label instead
+			$headlineLabel = $headline;
+			$headline = '';
+		}
+		if(empty($headline) && $headline !== false && $headlineLabel) {
+			$tag = $this->_('h3'); // Default headline tag
+			$markup = $options['markup']['headline'];
+			$options['headline'] = str_replace(array('{headline}', '{tag}'), array($headlineLabel, $tag), $markup); 
+		}
+
+		// populate markup version of successMessage, pendingMessage, errorMessage
+		foreach(array('success', 'pending', 'error') as $type) {
+			$property = $type . 'Message';
+			$value = $options[$property];
+			if(empty($value)) {
+				// option not yet populated
+				$label = $options['labels'][$type];
+			} else {
+				// if already populated and has markup, so we will leave it as-is...
+				if(strpos($value, '</')) continue; 
+				// ...otherwise if it has no markup, use it as the label
+				$label = $value;
+			}
+			$class = $options['classes'][$type];
+			$markup = $options['markup']['notification']; // For example: <p class='{class}'><strong>{message}</strong></p>
+			$options[$property] = str_replace(array('{class}', '{message}'), array($class, $label), $markup);
+		}
+		
+		$options['_ready'] = true;
+	}
+
+	/**
+	 * Get options
+	 * 
+	 * @return array
+	 * 
+	 */
+	public function getOptions() {
+		return $this->options;
+	}
+	
+	public function option($key, $value = null) {
+		if($value === null) {
+			$value = isset($this->options[$key]) ? $this->options[$key] : null;
+		} else {
+			$this->options[$key] = $value; 
+		}
+		return $value; 
+	}
+	
+	/**
+	 * Get or set array property
+	 *
+	 * @param string $property Name of array property: labels, markup, classes, attrs, presets
+	 * @param string|array $name Name of item to get or set or omit to get all, or assoc array to set all/multiple (and omit $value)
+	 * @param string|null $value Value to set (if setting) or omit if getting
+	 * @return string|array
+	 * @throws WireException
+	 * @since 3.0.153
+	 *
+	 */
+	protected function arrayOption($property, $name = '', $value = null) {
+		if(!is_array($this->options[$property])) {
+			// invalid
+			throw new WireException("Invalid array property: $property");
+		} else if(empty($name)) {
+			// get all
+			$value = $this->options[$property];
+		} else if(is_array($name)) {
+			// set all or multiple
+			$this->options[$property] = array_merge($this->options[$property], $value);
+		} else if($value !== null) {
+			// set one
+			$this->options[$property][$name] = $value; 
+		} else if(isset($this->options[$property][$name])) {
+			// get one
+			$value = $this->options[$property][$name];
+		} else {
+			// unknown
+			$value = '';
+		}
+		
+		if($value !== null && in_array($name, array('success', 'pending', 'error', 'notification'))) {
+			// reset notifications rendered by setOptions
+			$this->options['successMessage'] = '';
+			$this->options['pendingMessage'] = '';
+			$this->options['errorMessage'] = '';
+			$this->setOptions($this->options);
+		}
+		
+		return $value;
+	}
+
+	/**
+	 * Get or set label
+	 * 
+	 * @param string $name
+	 * @param string|null $value
+	 * @return string
+	 * @since 3.0.153
+	 * 
+	 */
+	public function labels($name, $value = null) {
+		$result = $this->arrayOption('labels', $name, $value); 
+		return $result;
+	}
+	
+	/**
+	 * Get or set attribute
+	 *
+	 * @param string $name
+	 * @param string|null $value
+	 * @return string
+	 * @since 3.0.153
+	 *
+	 */
+	public function attrs($name, $value = null) {
+		return $this->arrayOption('attrs', $name, $value);
+	}
+	
+	/**
+	 * Get or set class(es)
+	 *
+	 * @param string $name
+	 * @param string|null $value
+	 * @return string
+	 * @since 3.0.153
+	 *
+	 */
+	public function classes($name, $value = null) {
+		return $this->arrayOption('classes', $name, $value);
+	}
+	
+	/**
+	 * Get or set markup
+	 *
+	 * @param string $name
+	 * @param string|null $value
+	 * @return string
+	 * @since 3.0.153
+	 *
+	 */
+	public function markup($name, $value = null) {
+		return $this->arrayOption('markup', $name, $value);
+	}
+
+	/**
+	 * Get or set presets
+	 *
+	 * @param string $name
+	 * @param string|null $value
+	 * @return string
+	 * @since 3.0.153
+	 *
+	 */
+	public function presets($name, $value = null) {
+		return $this->arrayOption('presets', $name, $value);
+	}
+
+	/**
+	 * Set attribute
+	 * 
+	 * @param string $attr
+	 * @param string $value
+	 * @deprecated Use attrs() method instead
+	 * 
+	 */
 	public function setAttr($attr, $value) {
-		$this->options['attrs'][$attr] = $value; 
+		$this->attrs($attr, $value); 
 	}
 
+	/**
+	 * Set label 
+	 * 
+	 * @param string $label Label name
+	 * @param string $value Label value
+	 * @deprecated Use labels() method instead
+	 * 
+	 */
 	public function setLabel($label, $value) {
-		$this->options['labels'][$label] = $value; 
+		$this->labels($label, $value); 
 	}
-
+	
 	/**
 	 * Replaces the output of the render() method when a Comment is posted
 	 *
@@ -202,7 +456,7 @@ class CommentForm extends Wire implements CommentFormInterface {
 	 */
 	protected function renderSuccess(Comment $comment = null) {
 
-		$pageID = (int) $this->wire('input')->post->page_id; 
+		$pageID = (int) $this->wire('input')->post('page_id'); 
 		
 		if($pageID && $this->options['redirectAfterPost']) {
 			// redirectAfterPost option
@@ -240,8 +494,8 @@ class CommentForm extends Wire implements CommentFormInterface {
 			// other/comment still pending
 			$message = $this->options['pendingMessage'];
 		}
-		
-		return "<div id='CommentPostNote'>$message</div>"; 
+	
+		return str_replace('{out}', $message, $this->options['markup']['wrapNotification']); 
 	}
 
 	/**
@@ -260,52 +514,36 @@ class CommentForm extends Wire implements CommentFormInterface {
 		$submitKey = $id . "_submit";
 		$honeypot = $options['requireHoneypotField'];
 		$inputValues = array('cite' => '', 'email' => '', 'website' => '', 'stars' => '', 'text' => '', 'notify' => '');
+		$sanitizer = $this->wire('sanitizer'); /** @var Sanitizer $sanitizer */
 		if($honeypot) $inputValues[$honeypot] = '';
 		
 		$user = $this->wire('user'); 
 
 		if($user->isLoggedin()) {
-			$inputValues['cite'] = $user->name; 
-			$inputValues['email'] = $user->email;
+			$inputValues['cite'] = $sanitizer->entities($user->name); 
+			$inputValues['email'] = $sanitizer->entities($user->email);
 		}
-		
+	
+		/** @var WireInput $input */
 		$input = $this->wire('input'); 
 		$divClass = 'new';
 		$class = trim("CommentForm " . $attrs['class']); 
 		$note = '';
 
-		/*
-		 * Removed because this is not cache safe! Converted to JS cookie. 
-		 * 
-		if(is_array($this->session->CommentForm)) {
-			// submission data available in the session
-			$sessionValues = $this->session->CommentForm;
-			foreach($inputValues as $key => $value) {
-				if($key == 'text') continue; 
-				if(!isset($sessionValues[$key])) $sessionValues[$key] = '';
-				$inputValues[$key] = htmlentities($sessionValues[$key], ENT_QUOTES, $this->options['encoding']); 
-			}
-			unset($sessionValues);
-		}
-		*/
-
 		foreach($options['presets'] as $key => $value) {
 			if(!is_null($value)) $inputValues[$key] = $value; 
 		}
 
-		$out = '';
-		$showForm = true; 
-		
-		if($options['processInput'] && $input->post->$submitKey == 1) {
+		if($options['processInput'] && $input->post($submitKey) == 1) {
 			$comment = $this->processInput(); 
 			if($comment) { 
-				$out .= $this->renderSuccess($comment); // success, return
+				$note = $this->renderSuccess($comment); // success, return
 			} else {
 				$inputValues = array_merge($inputValues, $this->inputValues);
 				foreach($inputValues as $key => $value) {
 					$inputValues[$key] = htmlentities($value, ENT_QUOTES, $this->options['encoding']);
 				}
-				$note = "\n\t$options[errorMessage]";
+				$note = "$options[errorMessage]";
 				$divClass = 'error';
 			}
 
@@ -313,29 +551,58 @@ class CommentForm extends Wire implements CommentFormInterface {
 			$note = $this->renderSuccess();
 		}
 
-		$form = '';
-		if($showForm) {
-			if($this->options['depth'] > 0) {
-				$form = $this->renderFormThread($id, $class, $attrs, $labels, $inputValues);
-			} else {
-				$form = $this->renderFormNormal($id, $class, $attrs, $labels, $inputValues); 
-			}
-			if(!$options['presetsEditable']) {
-				foreach($options['presets'] as $key => $value) {
-					if(!is_null($value)) $form = str_replace(" name='$key'", " name='$key' disabled='disabled'", $form); 
-				}
+		$form = $this->renderForm($id, $class, $attrs, $labels, $inputValues);
+		
+		if(!$options['presetsEditable']) {
+			foreach($options['presets'] as $key => $value) {
+				$a = array(" name='$key'", " name=\"$key\"");
+				if(!is_null($value)) $form = str_replace($a, " name='$key' disabled='disabled'", $form); 
 			}
 		}
 
-		$out .= 
-			"\n<div id='{$id}' class='{$id}_$divClass'>" . 	
-			"\n" . $this->options['headline'] . $note . $form . 
-			"\n</div><!--/$id-->";
-
-
-		return $out; 
+		// <div id='{id}' class='{class}'>\n{headline}{note}{form}\n</div><!--/{id}-->
+		$replacements = array(
+			'{id}' => $id,
+			'{class}' => "{$id}_$divClass", 
+			'{headline}' => $this->options['headline'], 
+			'{note}' => $note, 
+			'{form}' => $form,
+		);
+		
+		return str_replace(array_keys($replacements), array_values($replacements), $this->markup('wrapAll'));
 	}
-	
+
+	/**
+	 * Render form 
+	 *
+	 * @param string $id
+	 * @param string $class
+	 * @param array $attrs
+	 * @param array $labels
+	 * @param array $inputValues
+	 * @return string
+	 *
+	 */
+	protected function renderForm($id, $class, $attrs, $labels, $inputValues) {
+		if($this->options['depth'] > 0) {
+			$form = $this->renderFormThread($id, $class, $attrs, $labels, $inputValues);
+		} else {
+			$form = $this->renderFormNormal($id, $class, $attrs, $labels, $inputValues);
+		}
+		return $form;
+	}
+
+	/**
+	 * Render normal form without threaded comments possibility
+	 * 
+	 * @param string $id
+	 * @param string $class
+	 * @param array $attrs
+	 * @param array $labels
+	 * @param array $inputValues
+	 * @return string
+	 * 
+	 */
 	protected function renderFormNormal($id, $class, $attrs, $labels, $inputValues) {
 		$form = 
 			"\n<form id='{$id}_form' class='$class CommentFormNormal' action='$attrs[action]#$id' method='$attrs[method]'>" .
@@ -399,51 +666,82 @@ class CommentForm extends Wire implements CommentFormInterface {
 		
 		return $form; 
 	}
-	
+
+	/**
+	 * Render form for threaded (depth) comments
+	 *
+	 * @param string $id
+	 * @param string $class
+	 * @param array $attrs
+	 * @param array $labels
+	 * @param array $inputValues
+	 * @return string
+	 *
+	 */
 	protected function renderFormThread($id, $class, $attrs, $labels, $inputValues) {
 		
+		$classes = $this->options['classes'];
+		$classes['form'] .= " $class CommentFormThread";
+		
+		foreach($classes as $key => $value) {
+			$classes[$key] = trim(str_replace('{id}', $id, $value));
+		}
+		
+		$labelClass = $classes['label'];
+		$labelClass = $labelClass ? " class='$labelClass'" : "";
+		$labelSpanClass = $classes['labelSpan'];
+		$labelSpanClass = $labelSpanClass ? " class='$labelSpanClass'" : "";
+		
+		$tag = $this->options['inputWrapTag'];
+		$formAttrs = trim(
+			"class='$classes[form]' " . 
+			"action='$attrs[action]#$id' " . 
+			"method='$attrs[method]' " . 
+			$attrs['form']
+		);
+		
 		$form = 
-			"\n<form class='$class CommentFormThread' action='$attrs[action]#$id' method='$attrs[method]'>" .
-			"\n\t<p class='CommentFormCite {$id}_cite'>" .
-			"\n\t\t<label>" . 
-			"\n\t\t\t<span>$labels[cite]</span> " .
-			"\n\t\t\t<input type='text' name='cite' class='required' required='required' value='$inputValues[cite]' maxlength='128' />" .
+			"\n<form $formAttrs>" .
+			"\n\t<$tag class='$classes[cite]'>" .
+			"\n\t\t<label$labelClass>" . 
+			"\n\t\t\t<span$labelSpanClass>$labels[cite]</span> " .
+			"\n\t\t\t<input type='text' name='cite' class='$classes[citeInput]' required='required' value='$inputValues[cite]' maxlength='128' />" .
 			"\n\t\t</label> " .
-			"\n\t</p>" .
-			"\n\t<p class='CommentFormEmail {$id}_email'>" .
-			"\n\t\t<label>" . 
-			"\n\t\t\t<span>$labels[email]</span> " . 
-			"\n\t\t\t<input type='email' name='email' class='required email' required='required' value='$inputValues[email]' maxlength='255' />" .
+			"\n\t</$tag>" .
+			"\n\t<$tag class='$classes[email]'>" .
+			"\n\t\t<label$labelClass>" . 
+			"\n\t\t\t<span$labelSpanClass>$labels[email]</span> " . 
+			"\n\t\t\t<input type='email' name='email' class='$classes[emailInput]' required='required' value='$inputValues[email]' maxlength='255' />" .
 			"\n\t\t</label>" . 
-			"\n\t</p>";
+			"\n\t</$tag>";
 
 		if($this->commentsField && $this->commentsField->useWebsite && $this->commentsField->schemaVersion > 0) {
 			$form .=
-				"\n\t<p class='CommentFormWebsite {$id}_website'>" .
-				"\n\t\t<label>" . 
-				"\n\t\t\t<span>$labels[website]</span> " .
-				"\n\t\t\t<input type='text' name='website' class='website' value='$inputValues[website]' maxlength='255' />" .
+				"\n\t<$tag class='$classes[website]'>" .
+				"\n\t\t<label$labelClass>" . 
+				"\n\t\t\t<span$labelSpanClass>$labels[website]</span> " .
+				"\n\t\t\t<input type='text' name='website' class='$classes[websiteInput]' value='$inputValues[website]' maxlength='255' />" .
 				"\n\t\t</label>" . 
-				"\n\t</p>";
+				"\n\t</$tag>";
 		}
 
 		if($this->commentsField->useStars && $this->commentsField->schemaVersion > 5) {
 			$commentStars = new CommentStars();
-			$starsClass = 'CommentFormStars';
+			$starsClass = $classes['stars'];
 			if($this->commentsField->useStars > 1) {
 				$starsNote = $labels['starsRequired'];
-				$starsClass .= ' CommentFormStarsRequired';
+				$starsClass .= " $classes[starsRequired]";
 			} else {
 				$starsNote = '';
 			}
 			$form .=
-				"\n\t<p class='$starsClass {$id}_stars' data-note='$starsNote'>" .
-				"\n\t\t<label>" .
-				"\n\t\t\t<span>$labels[stars]</span>" .
+				"\n\t<$tag class='$starsClass' data-note='$starsNote'>" .
+				"\n\t\t<label$labelClass>" .
+				"\n\t\t\t<span$labelSpanClass>$labels[stars]</span>" .
 				"\n\t\t\t<input type='number' name='stars' value='$inputValues[stars]' min='0' max='5' />" .
 				"\n\t\t\t" . $commentStars->render(0, true) .
 				"\n\t\t</label>" .
-				"\n\t</p>";
+				"\n\t</$tag>";
 		}
 
 		// do we need to show the honeypot field?
@@ -452,57 +750,76 @@ class CommentForm extends Wire implements CommentFormInterface {
 			$honeypotLabel = isset($labels[$honeypot]) ? $labels[$honeypot] : '';
 			$honeypotValue = isset($inputValues[$honeypot]) ? $inputValues[$honeypot] : '';
 			$form .=
-				"\n\t<p class='CommentFormHP {$id}_hp'>" .
+				"\n\t<$tag class='$classes[honeypot]'>" .
 				"\n\t\t<label><span>$honeypotLabel</span>" .
 				"\n\t\t<input type='text' name='$honeypot' value='$honeypotValue' size='3' />" .
 				"\n\t\t</label>" .
-				"\n\t</p>";
+				"\n\t</$tag>";
 		}
 
 		$form .=
-			"\n\t<p class='CommentFormText {$id}_text'>" .
-			"\n\t\t<label>" .
-			"\n\t\t\t<span>$labels[text]</span>" .
-			"\n\t\t\t<textarea name='text' class='required' required='required' rows='$attrs[rows]' cols='$attrs[cols]'>$inputValues[text]</textarea>" .
+			"\n\t<$tag class='$classes[text]'>" .
+			"\n\t\t<label$labelClass>" .
+			"\n\t\t\t<span$labelSpanClass>$labels[text]</span>" .
+			"\n\t\t\t<textarea name='text' class='$classes[textInput]' required='required' rows='$attrs[rows]' cols='$attrs[cols]'>$inputValues[text]</textarea>" .
 			"\n\t\t</label>" . 
-			"\n\t</p>" .
+			"\n\t</$tag>" .
 			$this->renderNotifyOptions() . 
-			"\n\t<p class='CommentFormSubmit {$id}_submit'>" .
-			"\n\t\t<button type='submit' name='{$id}_submit' value='1'>$labels[submit]</button>" .
+			"\n\t<$tag class='$classes[submit]'>" .
+			"\n\t\t<button type='submit' class='$classes[submitButton]' name='{$id}_submit' value='1'>$labels[submit]</button>" .
 			"\n\t\t<input type='hidden' name='page_id' value='{$this->page->id}' />" .
 			"\n\t\t<input type='hidden' class='CommentFormParent' name='parent_id' value='0' />" .
-			"\n\t</p>" .
+			"\n\t</$tag>" .
 			"\n</form>";
 		
 		return $form;
 	}
-	
+
+	/**
+	 * Render the "notify me" options
+	 * 
+	 * @return string
+	 * 
+	 */
 	protected function renderNotifyOptions() {
+		
 		if(!$this->commentsField->useNotify) return '';
 		$out = '';
+		$tag = $this->options['inputWrapTag'];
 		
 		$options = array();
 		
 		if($this->commentsField->depth > 0) {
-			$options['2'] = $this->_('Replies');
+			$options['2'] = $this->labels('notifyReplies');
 		}
-
 
 		if($this->commentsField->useNotify == Comment::flagNotifyAll) {
-			$options['4'] = $this->_('All');
+			$options['4'] = $this->labels('notifyAll');
 		}
 	
+		$classes = array(
+			'notify' => $this->options['classes']['notify'],
+			'label' => $this->options['classes']['label'],
+			'labelSpan' => $this->options['classes']['labelSpan'],
+			'radioLabel' => $this->options['classes']['radioLabel'],
+			'radioInput' => $this->options['classes']['radioInput'],
+		);
+		
+		foreach($classes as $key => $value) {
+			$classes[$key] = $value ? " class='" . trim($value) . "'" : "";
+		}
+		
 		if(count($options)) {
 			$out = 
-				"\n\t<p class='CommentFormNotify'>" . 
-				"\n\t\t<label>" . $this->_('E-Mail Notifications:') . "</label> " . 
-				"\n\t\t<label><input type='radio' name='notify' checked='checked' value='0'>" . $this->_('Off') . "</label> ";
+				"\n\t<$tag$classes[notify]>" . 
+				"\n\t\t<label$classes[label]><span$classes[labelSpan]>" . $this->labels('notify') . "</span></label> " . 
+				"\n\t\t<label$classes[radioLabel]><input$classes[radioInput] type='radio' name='notify' checked='checked' value='0' /> " . $this->labels('notifyOff') . "</label> ";
 			
 			foreach($options as $value => $label) {
 				$label = str_replace(' ', '&nbsp;', $label); 
-				$out .= "\n\t\t<label><input type='radio' name='notify' value='$value'>$label</label> ";
+				$out .= "\n\t\t<label$classes[radioLabel]><input$classes[radioInput] type='radio' name='notify' value='$value' /> $label</label> ";
 			}
-			$out .= "\n\t</p>";
+			$out .= "\n\t</$tag>";
 		}
 	
 		return $out; 
@@ -517,7 +834,7 @@ class CommentForm extends Wire implements CommentFormInterface {
 	public function processInput() {
 
 		$data = $this->wire('input')->post; 
-		if(!count($data)) return false; 	
+		if(!count($data) || !$this->commentsField) return false; 	
 
 		if($key = $this->options['requireSecurityField']) {
 			if(empty($data[$key])) return false; 
@@ -526,20 +843,37 @@ class CommentForm extends Wire implements CommentFormInterface {
 		if($key = $this->options['requireHoneypotField']) {
 			if(!empty($data[$key])) return false;
 		}
+		
+		$maxDepth = $this->commentsField->depth;
 
+		/** @var Comment $comment */
 		$comment = $this->wire(new Comment()); 
 		$comment->user_agent = $_SERVER['HTTP_USER_AGENT']; 
 		$comment->ip = $this->wire('session')->getIP();
 		$comment->created_users_id = $this->user->id; 
-		$comment->sort = count($this->comments)+1; 
-		$comment->parent_id = (int) $data->parent_id; 
+		//$comment->sort = count($this->comments)+1; 
+		$comment->parent_id = $maxDepth ? (int) abs((int) $data->parent_id) : 0; 
+		
+		if($comment->parent_id && $maxDepth) {
+			$parent = $this->commentsField->getCommentByID($this->page, $comment->parent_id); 
+			if($parent) {
+				// validate that depth is in allowed limit
+				$parents = $this->commentsField->getCommentParents($this->page, $comment); 
+				if($parents->count() >= $maxDepth) $comment->parent_id = 0;
+			} else {
+				// parent does not exist on this page
+				$comment->parent_id = 0;
+			}
+		}
 
 		$errors = array();
 		// $sessionData = array(); 
 
 		foreach(array('cite', 'email', 'website', 'stars', 'text') as $key) {
+			
 			if($key == 'website' && (!$this->commentsField || !$this->commentsField->useWebsite)) continue;
 			if($key == 'stars' && (!$this->commentsField || !$this->commentsField->useStars)) continue;
+			
 			if($this->options['presetsEditable'] || !isset($this->options['presets'][$key]) || $this->options['presets'][$key] === null) {
 				$comment->$key = $data->$key; // Comment performs sanitization/validation
 			} else {
@@ -564,19 +898,28 @@ class CommentForm extends Wire implements CommentFormInterface {
 				// send confirmation email
 			}
 		}
+		
 		$comment->flags = $flags;
 
-		if(!count($errors)) {
-			if($this->comments->add($comment) && $this->commentsField) {
-				$outputFormatting = $this->page->outputFormatting; 
+		if(!count($errors) && $this->commentsField) {
+			$result = $this->commentsField->addComment($this->page, $comment, true); 
+			if($result) {
+				// added successfully
+				if($this->comments->getPage()) $this->comments->add($comment);
+			} else {
+				// fallback legacy add process
+				$this->comments->add($comment);
+				$outputFormatting = $this->page->outputFormatting;
 				$this->page->setOutputFormatting(false);
 				$saveOptions = array();
-				if($this->options['quietSave']) $saveOptions['quiet'] = true; 
-				$this->page->save($this->commentsField->name, $saveOptions); 
+				if($this->options['quietSave']) $saveOptions['quiet'] = true;
+				$result = $this->page->save($this->commentsField->name, $saveOptions);
 				$this->page->setOutputFormatting($outputFormatting); 
-				$this->postedComment = $comment; 
-				// $this->wire('session')->set('CommentForm', $sessionData);
-				return $comment; 
+			}
+			// $this->wire('session')->set('CommentForm', $sessionData);
+			if($result) {
+				$this->postedComment = $comment;
+				return $comment;
 			}
 		}
 

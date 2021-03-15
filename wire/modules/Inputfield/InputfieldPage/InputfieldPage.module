@@ -13,7 +13,7 @@
  * @property int $template_id
  * @property array $template_ids
  * @property int $parent_id
- * @property string $inputfield
+ * @property string $inputfield Inputfield class used for input
  * @property string $labelFieldName Field name to use for label (note: this will be "." if $labelFieldFormat is in use).
  * @property string $labelFieldFormat Formatting string for $page->getMarkup() as alternative to $labelFieldName
  * @property string $findPagesCode
@@ -22,6 +22,7 @@
  * @property int|bool $addable
  * @property int|bool $allowUnpub
  * @property int $derefAsPage
+ * @property-read string $inputfieldClass Public property alias of protected getInputfieldClass() method
  * @property array $inputfieldClasses
  * 
  * @method string renderAddable()
@@ -311,12 +312,13 @@ class InputfieldPage extends Inputfield implements ConfigurableModule {
 	}
 	
 	public function getSetting($key) {
+		if($key === 'inputfieldClass') return $this->getInputfieldClass();
 		if($key === 'template_ids') return $this->getTemplateIDs();
 		$value = parent::getSetting($key);
 		if($key === 'template_id' && empty($value)) {
 			$templateIDs = $this->getTemplateIDs();
 			if(!empty($templateIDs)) $value = reset($templateIDs);
-		}
+		} 
 		return $value;
 	}
 
@@ -436,6 +438,7 @@ class InputfieldPage extends Inputfield implements ConfigurableModule {
 				if(is_null($value)) $value = $page->get($field); 
 				if(is_object($value) && $subfield) $value = $value->$subfield;
 				if(is_array($value)) $value = implode('|', $value); 
+				if(!strlen("$value") && (!$subfield || $subfield == 'id')) $value = '-1'; // force fail
 				$selector = str_replace($tag, "=$value", $selector); 
 			}
 		}
@@ -688,9 +691,7 @@ class InputfieldPage extends Inputfield implements ConfigurableModule {
 
 		$parent = $this->wire('pages')->get($parent_id); 
 
-		$test = $this->wire('pages')->newPage(array(
-			'template' => $this->wire('templates')->get($template_id)
-		));
+		$test = $this->wire('pages')->newPage($template_id); 
 		$test->parent = $parent; 
 		$test->id = -1; // prevents permissions check from failing
 
@@ -790,7 +791,7 @@ class InputfieldPage extends Inputfield implements ConfigurableModule {
 						// disallow unpublished
 						$warning = sprintf($this->_('Unpublished page %1$s is not allowed in field "%2$s"'), $page->path, $this->label);
 						if($this->wire('user')->isSuperuser()) {
-							$warning .= ' ' . sprintf($this->_('To allow unpublished pages, edit the "%s" field and see the setting on the "Advanced" tab.'), $this->name);
+							$warning .= ' ' . sprintf($this->_('To allow unpublished pages, edit the “%s” field and see the setting on the “Details” tab.'), $this->name);
 						}
 						$this->warning($warning);
 						continue; 
@@ -874,12 +875,13 @@ class InputfieldPage extends Inputfield implements ConfigurableModule {
 			}
 
 			// create a new page
-			$page = $this->wire('pages')->newPage();
-			$page->template = $template_id; 
-			$page->parent = $parent; 
-			$page->title = trim($title); 
-			$page->sort = $sort++;
-			$page->id = -1; // prevents the permissions check from failing
+			$page = $this->wire('pages')->newPage(array(
+				'template' => $template_id,
+				'parent' => $parent, 
+				'title' => trim($title), 
+				'sort' => $sort++,
+				'id' => -1, // prevents the permissions check from failing
+			));
 
 			// on first iteration perform a page-context access check
 			if(!$n && (!$parent->addable($page) || !$page->publishable())) {
@@ -1171,7 +1173,8 @@ class InputfieldPage extends Inputfield implements ConfigurableModule {
 		$inputfields->insertBefore($field, $selectablePagesFieldset); 	
 	
 		if($this->hasFieldtype !== false) {
-			
+		
+			/** @var InputfieldMarkup $f */
 			$f = $this->modules->get('InputfieldMarkup');
 			$f->label = $this->_('Regarding “Page List” input types');
 			$f->icon = 'warning';

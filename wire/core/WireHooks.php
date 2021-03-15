@@ -138,24 +138,22 @@ class WireHooks {
 	 *
 	 * @param Wire $object
 	 * @param string $method Optional method that hooks will be limited to. Or specify '*' to return all hooks everywhere.
-	 * @param int $type Type of hooks to return: 0=all, 1=local only, 2=static only
-	 * @param int $type Type of hooks to return, specify one of the following constants:
-	 * 	- WireHooks::getHooksAll returns all hooks (default)
-	 * 	- WireHooks::getHooksLocal returns local hooks only
-	 * 	- WireHooks::getHooksStatic returns static hooks only
+	 * @param int $getHooks Get hooks of type, specify one of the following constants:
+	 * 	- WireHooks::getHooksAll returns all hooks [0] (default)
+	 * 	- WireHooks::getHooksLocal returns local hooks [1] only
+	 * 	- WireHooks::getHooksStatic returns static hooks [2] only
 	 * @return array
 	 *
 	 */
-	public function getHooks(Wire $object, $method = '', $type = self::getHooksAll) {
+	public function getHooks(Wire $object, $method = '', $getHooks = self::getHooksAll) {
 
 		$hooks = array();
 
 		// see if we can do a quick exit
 		if($method && $method !== '*' && !$this->isHookedOrParents($object, $method)) return $hooks;
-		
 
 		// first determine which local hooks when should include
-		if($type !== self::getHooksStatic) {
+		if($getHooks !== self::getHooksStatic) {
 			$localHooks = $object->getLocalHooks();
 			if($method && $method !== '*') {
 				// populate all local hooks for given method
@@ -171,7 +169,7 @@ class WireHooks {
 		}
 
 		// if only local hooks requested, we can return them now
-		if($type === self::getHooksLocal) return $hooks;
+		if($getHooks === self::getHooksLocal) return $hooks;
 
 		$needSort = false;
 		$namespace = __NAMESPACE__ ? __NAMESPACE__ . "\\" : "";
@@ -476,18 +474,26 @@ class WireHooks {
 	 * $this->addHook($method, 'function_name'); or $this->addHook($method, 'function_name', $options);
 	 *
 	 * @param Wire $object
-	 * @param string $method Method name to hook into, NOT including the three preceding underscores.
+	 * @param string|array $method Method name to hook into, NOT including the three preceding underscores.
 	 * 	May also be Class::Method for same result as using the fromClass option.
+	 *  May also be array OR CSV string of either of the above to add multiple (since 3.0.137). 
 	 * @param object|null|callable $toObject Object to call $toMethod from,
 	 * 	Or null if $toMethod is a function outside of an object,
 	 * 	Or function|callable if $toObject is not applicable or function is provided as a closure.
-	 * @param string $toMethod Method from $toObject, or function name to call on a hook event. Optional.
+	 * @param string|array $toMethod Method from $toObject, or function name to call on a hook event, or $options array. 
 	 * @param array $options See $defaultHookOptions at the beginning of this class. Optional.
-	 * @return string A special Hook ID that should be retained if you need to remove the hook later
+	 * @return string A special Hook ID that should be retained if you need to remove the hook later.
+	 *  If the $method argument was a CSV string or array of multiple methods to hook, then CSV string of hook IDs 
+	 *  will be returned, and the same CSV string can be used with removeHook() calls. (since 3.0.137). 
 	 * @throws WireException
 	 *
 	 */
 	public function addHook(Wire $object, $method, $toObject, $toMethod = null, $options = array()) {
+		
+		if(empty($options['noAddHooks']) && (is_array($method) || strpos($method, ',') !== false)) {
+			// potentially multiple methods to hook in $method argument
+			return $this->addHooks($object, $method, $toObject, $toMethod, $options);
+		}
 		
 		if(is_array($toMethod)) {
 			// $options array specified as 3rd argument
@@ -547,35 +553,42 @@ class WireHooks {
 		}
 
 		$argOpen = strpos($method, '(');
-		if($argOpen && strpos($method, ')') > $argOpen+1) {
-			// extract argument selector match string(s), arg 0: Something::something(selector_string)
-			// or: Something::something(1:selector_string, 3:selector_string) matches arg 1 and 3. 
-			list($method, $argMatch) = explode('(', $method, 2);
-			$argMatch = trim($argMatch, ') ');
-			if(strpos($argMatch, ':') !== false) {
-				// zero-based argument indexes specified, i.e. 0:template=product, 1:order_status
-				$args = preg_split('/\b([0-9]):/', trim($argMatch), -1, PREG_SPLIT_DELIM_CAPTURE);
-				if(count($args)) {
-					$argMatch = array();
-					array_shift($args); // blank
-					while(count($args)) {
-						$argKey = (int) trim(array_shift($args));
-						$argVal = trim(array_shift($args), ', ');
-						$argMatch[$argKey] = $argVal;
+		if($argOpen) { 
+			// arguments to match may be specified in method name
+			$argClose = strpos($method, ')'); 
+			if($argClose === $argOpen+1) {
+				// method just has a "()" which can be discarded
+				$method = rtrim($method, '() ');
+			} else if($argClose > $argOpen+1) {
+				// extract argument selector match string(s), arg 0: Something::something(selector_string)
+				// or: Something::something(1:selector_string, 3:selector_string) matches arg 1 and 3. 
+				list($method, $argMatch) = explode('(', $method, 2);
+				$argMatch = trim($argMatch, ') ');
+				if(strpos($argMatch, ':') !== false) {
+					// zero-based argument indexes specified, i.e. 0:template=product, 1:order_status
+					$args = preg_split('/\b([0-9]):/', trim($argMatch), -1, PREG_SPLIT_DELIM_CAPTURE);
+					if(count($args)) {
+						$argMatch = array();
+						array_shift($args); // blank
+						while(count($args)) {
+							$argKey = (int) trim(array_shift($args));
+							$argVal = trim(array_shift($args), ', ');
+							$argMatch[$argKey] = $argVal;
+						}
+					}
+				} else {
+					// just single argument specified, so argument 0 is assumed
+				}
+				if(is_string($argMatch)) $argMatch = array(0 => $argMatch);
+				foreach($argMatch as $argKey => $argVal) {
+					if(Selectors::stringHasSelector($argVal)) {
+						$selectors = $this->wire->wire(new Selectors());
+						$selectors->init($argVal);
+						$argMatch[$argKey] = $selectors;
 					}
 				}
-			} else {
-				// just single argument specified, so argument 0 is assumed
+				if(count($argMatch)) $options['argMatch'] = $argMatch;
 			}
-			if(is_string($argMatch)) $argMatch = array(0 => $argMatch);
-			foreach($argMatch as $argKey => $argVal) {
-				if(Selectors::stringHasSelector($argVal)) {
-					$selectors = $this->wire->wire(new Selectors());
-					$selectors->init($argVal);
-					$argMatch[$argKey] = $selectors;
-				}
-			}
-			if(count($argMatch)) $options['argMatch'] = $argMatch;
 		}
 		
 		$localHooks = $object->getLocalHooks();
@@ -636,6 +649,11 @@ class WireHooks {
 		$cacheValue = $options['type'] == 'method' ? "$method()" : "$method";
 		if($options['fromClass']) $this->hookClassMethodCache["$options[fromClass]::$cacheValue"] = true;
 		$this->hookMethodCache[$cacheValue] = true;
+		if($options['type'] === 'either') {
+			$cacheValue = "$cacheValue()";
+			$this->hookMethodCache[$cacheValue] = true;
+			if($options['fromClass']) $this->hookClassMethodCache["$options[fromClass]::$cacheValue"] = true;
+		}
 
 		// keep track of all local hooks combined when debug mode is on
 		if($local && $this->config->debug) {
@@ -663,6 +681,78 @@ class WireHooks {
 		return $id;
 	}
 
+	/**
+	 * Add a hooks to multiple methods at once
+	 *
+	 * This is the same as addHook() except that the $method argument is an array or CSV string of hook definitions.
+	 * See the addHook() method for more detailed info on arguments.
+	 *
+	 * @param Wire $object
+	 * @param array|string $methods Array of one or more strings hook definitions, or CSV string of hook definitions
+	 * @param object|null|callable $toObject
+	 * @param string|array|null $toMethod
+	 * @param array $options
+	 * @return string CSV string of hook IDs that were added
+	 * @throws WireException
+	 * @since 3.0.137
+	 *
+	 */
+	protected function addHooks(Wire $object, $methods, $toObject, $toMethod = null, $options = array()) {
+		
+		if(!is_array($methods)) {
+			// potentially multiple methods defined in a CSV string
+			// could also be a single method with CSV arguments
+			
+			$str = (string) $methods;
+			$argSplit = '|';
+
+			// skip optional useless parenthesis in definition to avoid unnecessary iterations
+			if(strpos($str, '()') !== false) $str = str_replace('()', '', $str); 
+			
+			if(strpos($str, '(') === false) {
+				// If there is a parenthesis then it is multi-method definition without arguments
+				// Example: "Pages::saveReady, Pages::saved" 
+				$methods = explode(',', $str);
+				
+			} else {
+				// Single or multi-method definitions, at least one with arguments
+				// Isolate commas that are for arguments versus comments that separate multiple hook methods: 
+				// Single method example: "Page(template=order)::changed(0:order_status, 1:name=pending)"
+				// Multi method example: "Page(template=order)::changed(0:order_status, 1:name=pending), Page::saved"
+				
+				while(strpos($str, $argSplit) !== false) $argSplit .= '|';
+				$strs = explode('(', $str);
+				
+				foreach($strs as $key => $val) {
+					if(strpos($val, ')') === false) continue;
+					list($a, $b) = explode(')', $val, 2);
+					if(strpos($a, ',') !== false) $a = str_replace(array(', ', ','), $argSplit, $a);
+					$strs[$key] = "$a)$b";
+				}
+				
+				$str = implode('(', $strs);
+				$methods = explode(',', $str);
+				
+				foreach($methods as $key => $method) {
+					if(strpos($method, $argSplit) === false) continue;
+					$methods[$key] = str_replace($argSplit, ', ', $method);
+				}
+			}
+		}
+		
+		$result = array();
+		$options['noAddHooks'] = true; // prevent addHook() from calling addHooks() again
+		
+		foreach($methods as $method) {
+			$method = trim($method);
+			$hookID = $this->addHook($object, $method, $toObject, $toMethod, $options);
+			$result[] = $hookID;
+		}
+	
+		$result = implode(',', $result);
+		
+		return $result;
+	}
 
 	/**
 	 * Provides the implementation for calling hooks in ProcessWire
@@ -693,6 +783,16 @@ class WireHooks {
 		$cancelHooks = false;
 		$profiler = $this->wire->wire('profiler');
 		$hooks = null;
+		$methodExists = false;
+		
+		if($type === 'method') {
+			$methodExists = method_exists($object, $realMethod); 
+			if(!$methodExists && method_exists($object, $method)) {
+				// non-hookable method exists, indicating we may be in a manually called runHooks()
+				$methodExists = true;
+				$realMethod = $method;
+			}
+		}
 		
 		if(is_array($type)) {
 			// array of hooks to run provided in $type argument
@@ -703,12 +803,12 @@ class WireHooks {
 		$result = array(
 			'return' => null,
 			'numHooksRun' => 0,
-			'methodExists' => ($type === 'method' ? method_exists($object, $realMethod) : false),
+			'methodExists' => $methodExists,
 			'replace' => false,
 		);
 		
-		if($type === 'method' || $type === 'property') {
-			if(!$result['methodExists'] && !$this->isHookedOrParents($object, $method, $type)) {
+		if($type === 'method' || $type === 'property' || $type === 'either') {
+			if(!$methodExists && !$this->isHookedOrParents($object, $method, $type)) {
 				return $result; // exit quickly when we can
 			}
 		}
@@ -719,7 +819,7 @@ class WireHooks {
 
 			if($type === 'method') {
 				if($when === 'after' && $result['replace'] !== true) {
-					if($result['methodExists']) {
+					if($methodExists) {
 						$result['return'] = $object->_callMethod($realMethod, $arguments);
 					} else {
 						$result['return'] = null;
@@ -734,6 +834,8 @@ class WireHooks {
 			foreach($hooks as $priority => $hook) {
 
 				if(!$hook['options'][$when]) continue;
+				if($type === 'property' && $hook['options']['type'] === 'method') continue;
+				if($type === 'method' && $hook['options']['type'] === 'property') continue;
 
 				if(!empty($hook['options']['objMatch'])) {
 					/** @var Selectors $objMatch */
@@ -914,23 +1016,46 @@ class WireHooks {
 	 * }
 	 *
 	 * @param Wire $object
-	 * @param string|null $hookID
+	 * @param string|array|null $hookID Can be single hook ID, array of hook IDs, or CSV string of hook IDs
 	 * @return Wire
 	 *
 	 */
 	public function removeHook(Wire $object, $hookID) {
-		if(!empty($hookID) && strpos($hookID, ':')) {
+		if(is_array($hookID) || strpos($hookID, ',')) {
+			return $this->removeHooks($object, $hookID);
+		}
+		if(!empty($hookID) && substr_count($hookID, ':') === 2) {
+			// local hook ID ":100.0:methodName" or static hook ID "ClassName:100.0:methodName"
 			list($hookClass, $priority, $method) = explode(':', $hookID);
 			if(empty($hookClass)) {
+				// local hook
 				$localHooks = $object->getLocalHooks();
 				unset($localHooks[$method][$priority]);
 				$object->setLocalHooks($localHooks);
 			} else {
+				// static hook
 				unset($this->staticHooks[$hookClass][$method][$priority]);
 				if(empty($this->staticHooks[$hookClass][$method])) {
 					unset($this->hookClassMethodCache["$hookClass::$method"]);
 				}
 			}
+		}
+		return $object;
+	}
+
+	/**
+	 * Given a hook ID or multiple hook IDs (in array or CSV string) remove the hooks
+	 * 
+	 * @param Wire $object
+	 * @param array|string $hookIDs
+	 * @return Wire
+	 * @since 3.0.137
+	 * 
+	 */
+	protected function removeHooks(Wire $object, $hookIDs) {
+		if(!is_array($hookIDs)) $hookIDs = explode(',', $hookIDs); 
+		foreach($hookIDs as $hookID) {
+			$this->removeHook($object, $hookID);
 		}
 		return $object;
 	}

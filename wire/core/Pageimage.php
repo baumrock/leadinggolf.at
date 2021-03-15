@@ -24,7 +24,7 @@
  * ~~~~~
  * #pw-body
  * 
- * ProcessWire 3.x, Copyright 2018 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
  *
  * @property-read int $width Width of image, in pixels.
@@ -33,16 +33,50 @@
  * @property-read int $hidpiHeight HiDPI heigh of image, in pixels. #pw-internal
  * @property-read string $error Last image resizing error message, when applicable. #pw-group-resize-and-crop
  * @property-read Pageimage $original Reference to original $image, if this is a resized version. #pw-group-variations
- * @property-read string $url
- * @property-read string $basename
- * @property-read string $filename
- * @property-read array $focus Focus array contains 'top' (float), 'left' (float), 'zoom' (int), and 'default' (bool) properties. 
+ * @property-read array $focus Focus array contains 'top' (float), 'left' (float), 'zoom' (int), and 'default' (bool) properties.
+ * @property-read string $focusStr Readable string containing focus information.
  * @property-read bool $hasFocus Does this image have custom focus settings? (i.e. $focus['default'] == true)
- * 
- * @method bool|array isVariation($basename, $allowSelf = false)
+ * @property-read array $suffix Array containing file suffix(es).
+ * @property-read string $suffixStr String of file suffix(es) separated by comma.
+ * @property-read string $alt Convenient alias for the 'description' property, unless overridden (since 3.0.125).
+ * @property-read string $src Convenient alias for the 'url' property, unless overridden (since 3.0.125).
+ * @property-read PagefileExtra $webp Access webp version of image (since 3.0.132)
+ * @property-read float $ratio Image ratio where 1.0 is square, >1 is wider than tall, >2 is twice as wide as well, <1 is taller than wide, etc. (since 3.0.154+)
+ *
+ * Properties inherited from Pagefile
+ * ==================================
+ * @property-read string $url URL to the file on the server.
+ * @property-read string $httpUrl URL to the file on the server including scheme and hostname.
+ * @property-read string $URL Same as $url property but with browser cache busting query string appended. #pw-group-other
+ * @property-read string $HTTPURL Same as the cache-busting uppercase “URL” property, but includes scheme and hostname. #pw-group-other
+ * @property-read string $filename Full disk path to the file on the server.
+ * @property-read string $name Returns the filename without the path, same as the "basename" property.
+ * @property-read string $hash Get a unique hash (for the page) representing this Pagefile.
+ * @property-read array $tagsArray Get file tags as an array. #pw-group-tags @since 3.0.17
+ * @property string $basename Returns the filename without the path.
+ * @property string $description Value of the file’s description field (string), if enabled. Note you can also set this property directly.
+ * @property string $tags Value of the file’s tags field (string), if enabled. #pw-group-tags
+ * @property string $ext File’s extension (i.e. last 3 or so characters)
+ * @property-read int $filesize File size (number of bytes).
+ * @property int $modified Unix timestamp of when Pagefile (file, description or tags) was last modified. #pw-group-date-time
+ * @property-read string $modifiedStr Readable date/time string of when Pagefile was last modified. #pw-group-date-time
+ * @property-read int $mtime Unix timestamp of when file (only) was last modified. #pw-group-date-time
+ * @property-read string $mtimeStr Readable date/time string when file (only) was last modified. #pw-group-date-time
+ * @property int $created Unix timestamp of when file was created. #pw-group-date-time
+ * @property-read string $createdStr Readable date/time string of when Pagefile was created #pw-group-date-time
+ * @property string $filesizeStr File size as a formatted string, i.e. “123 Kb”.
+ * @property Pagefiles $pagefiles The Pagefiles WireArray that contains this file. #pw-group-other
+ * @property Page $page The Page object that this file is part of. #pw-group-other
+ * @property Field $field The Field object that this file is part of. #pw-group-other
+ * @property PageimageDebugInfo $debugInfo
+ *
+ * Hookable methods 
+ * ================
+ * @method bool|array isVariation($basename, $options = array())
  * @method Pageimage crop($x, $y, $width, $height, $options = array())
  * @method array rebuildVariations($mode = 0, array $suffix = array(), array $options = array())
  * @method install($filename)
+ * @method render($markup = '', $options = array())
  *
  */
 
@@ -67,9 +101,11 @@ class Pageimage extends Pagefile {
 	protected $original = null;
 
 	/**
-	 * Cached result of the getVariations() method
+	 * Cached result of the variations() method
 	 *
-	 * Don't reference this directly, because it won't be loaded unless requested, instead use the getVariations() method
+	 * Don't reference this directly, because it won't be loaded unless requested, instead use the variations() method
+	 * 
+	 * @var PageimageVariations
 	 *
 	 */
 	private $variations = null; 
@@ -85,7 +121,13 @@ class Pageimage extends Pagefile {
 	private $imageInfo = array(
 		'width' => 0, 
 		'height' => 0, 
-		); 
+	);
+
+	/**
+	 * @var PageimageDebugInfo|null
+	 *
+	 */
+	private $pageimageDebugInfo = null; 
 
 	/**
 	 * Last size error, if one occurred. 
@@ -94,6 +136,14 @@ class Pageimage extends Pagefile {
 	 *
 	 */
 	protected $error = '';
+
+	/**
+	 * Last used Pageimage::size() $options argument
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $sizeOptions = array();
 
 	/**
 	 * Construct a new Pageimage
@@ -111,6 +161,7 @@ class Pageimage extends Pagefile {
 	public function __construct(Pagefiles $pagefiles, $filename) {
 
 		if(!$pagefiles instanceof Pageimages) throw new WireException("Pageimage::__construct requires instance of Pageimages"); 
+		$pagefiles->wire($this);
 		$this->pageimages = $pagefiles; 
 		parent::__construct($pagefiles, $filename); 
 	}
@@ -201,7 +252,8 @@ class Pageimage extends Pagefile {
 	 *   - SET: Specify both $top and $left arguments to set (values assumed to be percentages).
 	 *   - SET: Specify array containing "top" and "left" indexes to set (percentages). 
 	 *   - SET: Specify array where index 0 is top and index 1 is left (percentages). 
-	 *   - SET: Specify string in the format "top left", i.e. "25 70" (percentages). 
+	 *   - SET: Specify string in the format "top left", i.e. "25 70" or "top left zoom", i.e. "25 70 30" (percentages).
+	 *   - SET: Specify CSV key=value string in the format "top=25%, left=70%, zoom=30%" in any order
 	 *   - UNSET: Specify boolean false to remove any focus values. 
 	 * @param null|float|int $left Set left value (when $top value is float|int) 
 	 *   - This argument is only used when setting focus and should be omitted otherwise. 
@@ -214,16 +266,29 @@ class Pageimage extends Pagefile {
 	 */
 	public function focus($top = null, $left = null, $zoom = null) {
 		
-		if(is_string($top) && strpos($top, ' ') && $left === null) {
-			// SET string like "25 70 0" (representing "top left zoom")
-			if(strpos($top, ' ') != strrpos($top, ' ')) {
-				// with zoom
-				list($top, $left, $zoom) = explode(' ', $top, 3);
-			} else {
-				// without zoom
-				list($top, $left) = explode(' ', $top, 2);
-				$zoom = 0;
-			}	
+		if(is_string($top) && $left === null) { 
+			if(strpos($top, '=')) {
+				// SET string "top=25%, left=70%, zoom=0%"
+				$a = array('top' => 50, 'left' => 50, 'zoom' => 0);
+				$parts = explode(',', str_replace(array(' ', '%'), '', $top));
+				foreach($parts as $part) {
+					if(!strpos($part, '=')) continue;
+					list($name, $pct) = explode('=', $part);
+					$a[$name] = strpos($pct, '.') !== false ? (float) $pct : (int) $pct;
+				}
+				$top = $a; // for later setting by array
+				unset($a);
+			} else if(strpos($top, ' ')) {
+				// SET string like "25 70 0" (representing "top left zoom")
+				if(strpos($top, ' ') != strrpos($top, ' ')) {
+					// with zoom
+					list($top, $left, $zoom) = explode(' ', $top, 3);
+				} else {
+					// without zoom
+					list($top, $left) = explode(' ', $top, 2);
+					$zoom = 0;
+				}
+			}
 		}
 		
 		if($top === null || $top === true || ($top === 1 && $left === null)) {
@@ -291,6 +356,23 @@ class Pageimage extends Pagefile {
 		
 		return $this;
 	}
+
+	/**
+	 * Set property
+	 * 
+	 * @param string $key
+	 * @param mixed $value
+	 * @return Pageimage|WireData
+	 * 
+	 */
+	public function set($key, $value) {
+		if($key === 'sizeOptions' && is_array($value)) {
+			$this->sizeOptions = $value;
+			return $this;
+		} else {
+			return parent::set($key, $value);
+		}
+	}
 	
 	/**
 	 * Get a property from this Pageimage
@@ -324,8 +406,48 @@ class Pageimage extends Pagefile {
 			case 'focus':
 				$value = $this->focus();
 				break;
+			case 'focusStr':
+				$focus = $this->focus();
+				$value = "top=$focus[top]%,left=$focus[left]%,zoom=$focus[zoom]%" . ($focus['default'] ? " (default)" : "");
+				break;
 			case 'hasFocus': 
 				$value = $this->focus(true);
+				break;
+			case 'suffix':
+				$value = $this->suffix();
+				break;
+			case 'suffixStr':
+				$value = implode(',', $this->suffix());
+				break;
+			case 'alt':
+				$value = parent::get('alt');
+				if($value === null) $value = $this->description();
+				break;
+			case 'src':
+				$value = parent::get('src');
+				if($value === null) $value = $this->url();
+				break;
+			case 'webp':	
+				$value = $this->webp();
+				break;
+			case 'hasWebp':	
+				$value = $this->webp()->exists();
+				break;
+			case 'webpUrl': 
+				$value = $this->webp()->url();
+				break;
+			case 'webpFilename': 
+				$value = $this->webp()->filename();
+				break;
+			case 'debugInfo':
+				if(!$this->pageimageDebugInfo) $this->pageimageDebugInfo = new PageimageDebugInfo($this);
+				$value = $this->pageimageDebugInfo;
+				break;
+			case 'sizeOptions':	
+				$value = $this->sizeOptions;
+				break;
+			case 'ratio':
+				$value = $this->ratio();
 				break;
 			default: 
 				$value = parent::get($key); 
@@ -333,6 +455,21 @@ class Pageimage extends Pagefile {
 		return $value; 
 	}
 
+	/**
+	 * Set image info (internal use)
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param array $info
+	 * 
+	 */
+	public function setImageInfo(array $info) {
+		// width and height less than 0 indicate percentage rather than pixels
+		if(isset($info['width']) && $info['width'] < 0) $info['width'] = abs($info['width']) . '%';
+		if(isset($info['height']) && $info['height'] < 0) $info['height'] = abs($info['height']) . '%';
+		$this->imageInfo = array_merge($this->imageInfo, $info);
+	}
+	
 	/**
 	 * Gets the image information with PHP’s getimagesize function and caches the result
 	 * 
@@ -345,31 +482,32 @@ class Pageimage extends Pagefile {
 	 */
 	public function getImageInfo($reset = false) {
 
-		if($reset) $checkImage = true; 
-			else if($this->imageInfo['width']) $checkImage = false; 
-			else $checkImage = true; 
-		
 		$imageInfo = $this->imageInfo;
 		$filename = is_string($reset) && file_exists($reset) ? $reset : ''; 
-
-		if($checkImage || $filename) { 
-			if($this->ext == 'svg') {
-				$info = $this->getImageInfoSVG($filename);
-				$imageInfo['width'] = $info['width'];
-				$imageInfo['height'] = $info['height'];
-			} else {
-				if($filename) {
-					$info = @getimagesize($filename);
-				} else {
-					$info = @getimagesize($this->filename);
-				}
-				if($info) {
-					$imageInfo['width'] = $info[0];
-					$imageInfo['height'] = $info[1];
-				}
-			}
-			if(!$filename) $this->imageInfo = $imageInfo;
+	
+		if(!$reset && $imageInfo['width'] && !$filename) {
+			return $imageInfo;
 		}
+
+		if($this->ext == 'svg') {
+			$imageInfo = array_merge($imageInfo, $this->getImageInfoSVG($filename));
+		} else {
+			if($filename) {
+				$info = @getimagesize($filename);
+			} else {
+				$info = @getimagesize($this->filename);
+			}
+			if((!$info || empty($info[0])) && !empty($this->sizeOptions['_width'])) {
+				// on fail, fallback to size options that were requested for the image (if available)
+				$imageInfo['width'] = $this->sizeOptions['_width'];
+				$imageInfo['height'] = $this->sizeOptions['_height'];
+			} else if($info) {
+				$imageInfo['width'] = $info[0];
+				$imageInfo['height'] = $info[1];
+			}
+		}
+		
+		if(!$filename) $this->imageInfo = $imageInfo;
 
 		return $imageInfo; 
 	}
@@ -448,6 +586,9 @@ class Pageimage extends Pagefile {
 	 * 
 	 * // Output thumbnail
 	 * echo "<img src='$thumb->url' />";
+	 * 
+	 * // Create image of size predefined in $config->imageSizes (3.0.151+)
+	 * $photo = $image->size('landscape'); 
 	 * ~~~~~
 	 * 
 	 * **About the $options argument**
@@ -475,6 +616,9 @@ class Pageimage extends Pagefile {
 	 *  - `nameHeight` (int): Height to use for filename (default is to use specified $height argument). 
 	 *  - `focus` (bool): Should resizes that result in crop use focus area if available? (default=true). 
 	 *     In order for focus to be applicable, resize must include both width and height. 
+	 *  - `allowOriginal` (bool): Return original if already at width/height? May not be combined with other options. (default=false)
+	 *  - `webpAdd` (bool): Also create a secondary .webp image variation? (default=false)
+	 *  - `webpQuality` (int): Quality setting for extra webp images (default=90). 
 	 * 
 	 * **Possible values for "cropping" option**  
 	 * 
@@ -505,24 +649,46 @@ class Pageimage extends Pagefile {
 	 * #pw-group-common
 	 * #pw-hooks
 	 *
-	 * @param int $width Target width of new image
-	 * @param int $height Target height of new image
+	 * @param int|string $width Target width of new image or (3.0.151+) specify prefined image size name
+	 * @param int|array $height Target height of new image or (3.0.151+) options array if no height argument needed
 	 * @param array|string|int $options Array of options to override default behavior: 
 	 *  - Specify `array` of options as indicated in the section above. 
 	 *  - Or you may specify type `string` containing "cropping" value.
 	 *  - Or you may specify type `int` containing "quality" value.
 	 *  - Or you may specify type `bool` containing "upscaling" value.
 	 * @return Pageimage Returns a new Pageimage object that is a variation of the original. 
-	 *  If the specified dimensions/options are the same as the original, then the original then the original will be returned.
+	 *  If the specified dimensions/options are the same as the original, then the original will be returned.
 	 *
 	 */
-	public function size($width, $height, $options = array()) {
+	public function size($width, $height = 0, $options = array()) {
+		
+		if(is_array($height)) {
+			$options = $height;
+			$height = 0;
+		}
+		
+		if(!is_array($options)) {
+			$options = $this->sizeOptionsToArray($options);
+		}
+		
+		if(is_string($width) && $width && !ctype_digit($width)) {
+			// named image size
+			return $this->sizeName($width, $options);
+		}
 
 		if($this->wire('hooks')->isHooked('Pageimage::size()')) {
-			return $this->__call('size', array($width, $height, $options)); 
-		} else { 
-			return $this->___size($width, $height, $options);
+			$result = $this->__call('size', array($width, $height, $options)); 
+		} else {  
+			$result = $this->___size($width, $height, $options);
 		}
+
+		if($result) {
+			$options['_width'] = $width;
+			$options['_height'] = $height;
+			$result->set('sizeOptions', $options);
+		}
+		
+		return $result;
 	}
 
 	/**
@@ -539,25 +705,10 @@ class Pageimage extends Pagefile {
 	 *
 	 */
 	protected function ___size($width, $height, $options) {
-	
-		if($this->ext == 'svg') return $this; 
 
-		if(!is_array($options)) { 
-			if(is_string($options)) {
-				// optionally allow a string to be specified with crop direction, for shorter syntax
-				if(strpos($options, ',') !== false) $options = explode(',', $options); // 30,40
-				$options = array('cropping' => $options); 
-			} else if(is_int($options)) {
-				// optionally allow an integer to be specified with quality, for shorter syntax
-				$options = array('quality' => $options);
-			} else if(is_bool($options)) {
-				// optionally allow a boolean to be specified with upscaling toggle on/off
-				$options = array('upscaling' => $options); 
-			} else { 
-				// unknown options type
-				$options = array();
-			}
-		}
+		$this->error = '';
+		if($this->ext == 'svg') return $this; 
+		if(!is_array($options)) $options = $this->sizeOptionsToArray($options);
 		
 		// originally requested options
 		$requestOptions = $options;
@@ -570,6 +721,10 @@ class Pageimage extends Pagefile {
 			'sharpening' => 'soft',
 			'quality' => 90,
 			'hidpiQuality' => 40, 
+			'webpQuality' => 90,
+			'webpAdd' => false,
+			'webpName' => '', // use this for the webp file basename rather than mirroring from the jpg/png
+			'webpOnly' => false, // only keep the webp version (requires webpAdd option)
 			'suffix' => array(), // can be array of suffixes or string of 1 suffix
 			'forceNew' => false,  // force it to create new image even if already exists
 			'hidpi' => false, 
@@ -580,17 +735,31 @@ class Pageimage extends Pagefile {
 			'nameHeight' => null,  // override height to use for filename, int when populated
 			'focus' => true, // allow single dimension resizes to use focus area?
 			'zoom' => null, // zoom override, used only if focus is applicable, int when populated
+			'allowOriginal' => false, // Return original image if already at requested dimensions? (must be only specified option)
 			);
 
-		$this->error = '';
-		$debug = $this->wire('config')->debug;
-		$configOptions = $this->wire('config')->imageSizerOptions; 
+		/** @var WireFileTools $files */
+		/** @var Config $config */
+		$files = $this->wire('files');
+		$config = $this->wire('config');
+		$debug = $config->debug;
+		$configOptions = $config->imageSizerOptions; 
+		$webpOptions = $config->webpOptions;
+		if(!empty($webpOptions['quality'])) $defaultOptions['webpQuality'] = $webpOptions['quality'];
+		
 		if(!is_array($configOptions)) $configOptions = array();
 		$options = array_merge($defaultOptions, $configOptions, $options); 
 		if($options['cropping'] === 1) $options['cropping'] = true;
 
 		$width = (int) $width;
 		$height = (int) $height;
+		
+		if($options['allowOriginal'] && count($requestOptions) === 1) {
+			if((!$width || $this->width() == $width) && (!$height || $this->height() == $height)) {
+				// return original image if already at requested width/height
+				return $this;
+			}
+		}
 	
 		if($options['cropping'] === true && empty($options['cropExtra']) && $options['focus'] && $this->hasFocus && $width && $height) {
 			// crop to focus area
@@ -656,17 +825,44 @@ class Pageimage extends Pagefile {
 		$nameHeight = is_int($options['nameHeight']) ? $options['nameHeight'] : $height;
 		
 		// i.e. myfile.100x100.jpg or myfile.100x100nw-suffix1-suffix2.jpg
-		$basename .= '.' . $nameWidth . 'x' . $nameHeight . $crop . $suffixStr . "." . $this->ext();	
-		$filenameFinal = $this->pagefiles->path() . $basename;
+		$basenameNoExt = $basename . '.' . $nameWidth . 'x' . $nameHeight . $crop . $suffixStr;  // basename without ext
+		$basename = $basenameNoExt . '.' . $this->ext(); // basename with ext
+		
 		$filenameUnvalidated = '';
-		$exists = file_exists($filenameFinal);
+		$filenameUnvalidatedWebp = '';
+		
+		$filenameFinal = $this->pagefiles->path() . $basename;
+		$filenameFinalExists = file_exists($filenameFinal);
 
+		if(!empty($options['webpName'])) {
+			$filenameFinalWebp = $this->pagefiles->path() . basename($options['webpName'], '.webp') . '.webp';
+		} else if(!empty($webpOptions['useSrcExt'])) {
+			$filenameFinalWebp = $this->pagefiles->path() . $basename . '.webp'; // file.jpg.webp
+		} else {
+			$filenameFinalWebp = $this->pagefiles->path() . $basenameNoExt . '.webp'; // file.webp
+		}
+		
+		// force new creation if requested webp copy doesn't exist, (regardless if regular variation exists or not)
+		if($options['webpAdd'] && !file_exists($filenameFinalWebp)) $options['forceNew'] = true;
+		
 		// create a new resize if it doesn't already exist or forceNew option is set
-		if(!$exists || $options['forceNew']) {
+		if(!$filenameFinalExists && !file_exists($this->filename())) {
+			// no original file exists to create variation from 
+			$this->error = "Original image does not exist to create size variation: " . $this->url();
+			
+		} else if(!$filenameFinalExists || $options['forceNew']) {
+
 			// filenameUnvalidated is temporary filename used for resize
-			$filenameUnvalidated = $this->pagefiles->page->filesManager()->getTempPath() . $basename;
-			if($exists && $options['forceNew']) @unlink($filenameFinal);
-			if(file_exists($filenameUnvalidated)) @unlink($filenameUnvalidated);
+			$tempDir = $this->pagefiles->page->filesManager()->getTempPath();
+			$filenameUnvalidated = $tempDir . $basename;
+			$filenameUnvalidatedWebp = $tempDir . $basenameNoExt . '.webp';
+			
+			if($filenameFinalExists && $options['forceNew']) $files->unlink($filenameFinal, true);
+			if(file_exists($filenameFinalWebp) && $options['forceNew']) $files->unlink($filenameFinalWebp, true);
+			
+			if(file_exists($filenameUnvalidated)) $files->unlink($filenameUnvalidated, true);
+			if(file_exists($filenameUnvalidatedWebp)) $files->unlink($filenameUnvalidatedWebp, true);
+
 			if(@copy($this->filename(), $filenameUnvalidated)) {
 				try { 
 					
@@ -677,7 +873,15 @@ class Pageimage extends Pagefile {
 					
 					/** @var ImageSizerEngine $engine */
 					$engine = $sizer->getEngine();
-					
+
+					/* if the current engine installation does not support webp, modify the options param */
+					if(!empty($options['webpAdd']) && !$engine->supported('webp')) {
+						// no engines support webp
+						$options['webpAdd'] = false;
+						$options['webpOnly'] = false;
+						$engine->setOptions($options);
+					}
+
 					// allow for ImageSizerEngine module settings for quality and sharpening to override system defaults
 					// when they are not specified as an option to this resize() method
 					$engineConfigData = $engine->getConfigData();
@@ -692,20 +896,23 @@ class Pageimage extends Pagefile {
 						}
 					}
 					
-					if($sizer->resize($width, $height) && @rename($filenameUnvalidated, $filenameFinal)) {
-						$this->wire('files')->chmod($filenameFinal);
+					if($sizer->resize($width, $height)) {
+						if($options['webpAdd'] && $options['webpOnly']) {
+							if(is_file($filenameUnvalidated)) $files->unlink($filenameUnvalidated);
+						} else if(!$files->rename($filenameUnvalidated, $filenameFinal)) {
+							$this->error = "Rename failed: $filenameUnvalidated => $filenameFinal";
+						}
+						if($options['webpAdd'] && file_exists($filenameUnvalidatedWebp)) { 
+							$files->rename($filenameUnvalidatedWebp, $filenameFinalWebp);
+						}
 					} else {
 						$this->error = "ImageSizer::resize($width, $height) failed for $filenameUnvalidated";
 					}
 
-					$timer = $debug ? Debug::timer($timer) : null;
-					if($debug) $this->wire('log')->save('image-sizer',
+					if($debug && empty($options['webpOnly'])) $this->wire('log')->save('image-sizer',
 						str_replace('ImageSizerEngine', '', $sizer->getEngine()) . ' ' . 
-						($this->error ? "FAILED Resize: " : "Resized: ") . 
-						"$originalName => " . 
-						basename($filenameFinal) . " " .
-						"({$width}x{$height}) $timer secs " . 
-						"$originalSize => " . filesize($filenameFinal) . " bytes " . 
+						($this->error ? "FAILED Resize: " : "Resized: ") . "$originalName => " . basename($filenameFinal) . " " . 
+						"({$width}x{$height}) " . Debug::timer($timer) . " secs $originalSize => " . filesize($filenameFinal) . " bytes " . 
 						"(quality=$options[quality], sharpening=$options[sharpening]) "
 					);
 					
@@ -723,18 +930,16 @@ class Pageimage extends Pagefile {
 		// if desired, user can check for property of $pageimage->error to see if an error occurred. 
 		// if an error occurred, that error property will be populated with details
 		if($this->error) { 
-			// error condition: unlink copied file 
-			if(is_file($filenameFinal)) @unlink($filenameFinal);
-			if($filenameUnvalidated && is_file($filenameUnvalidated)) @unlink($filenameUnvalidated);
-
-			// write an invalid image so it's clear something failed
-			// todo: maybe return a 1-pixel blank image instead?
-			$data = "This is intentionally invalid image data.\n";
-			if(file_put_contents($filenameFinal, $data) !== false) $this->wire('files')->chmod($filenameFinal);
+			// error condition: unlink copied files
+			if($filenameFinal && is_file($filenameFinal)) $files->unlink($filenameFinal, true);
+			if($filenameUnvalidated && is_file($filenameUnvalidated)) $files->unlink($filenameUnvalidated);
+			if($filenameFinalWebp && is_file($filenameFinalWebp)) $files->unlink($filenameFinalWebp, true);
+			if($filenameUnvalidatedWebp && is_file($filenameUnvalidatedWebp)) $files->unlink($filenameUnvalidatedWebp);
 
 			// we also tell PW about it for logging and/or admin purposes
-			$this->error($this->error); 
-			if($debug) $this->wire('log')->save('image-sizer', "$filenameFinal - $this->error");
+			$this->error($this->error);
+			$logError = str_replace($config->paths->root, $config->urls->root, $filenameFinal)  . " - $this->error";
+			$this->wire('log')->save('image-sizer', $logError);
 		}
 
 		$pageimage->setFilename($filenameFinal); 	
@@ -742,21 +947,69 @@ class Pageimage extends Pagefile {
 
 		return $pageimage; 
 	}
+
+	protected function sizeOptionsToArray($options) {
+		if(is_array($options)) return $options;
+		if(is_string($options)) {
+			// optionally allow a string to be specified with crop direction, for shorter syntax
+			if(strpos($options, ',') !== false) $options = explode(',', $options); // 30,40
+			$options = array('cropping' => $options);
+		} else if(is_int($options)) {
+			// optionally allow an integer to be specified with quality, for shorter syntax
+			$options = array('quality' => $options);
+		} else if(is_bool($options)) {
+			// optionally allow a boolean to be specified with upscaling toggle on/off
+			$options = array('upscaling' => $options);
+		} else {
+			// unknown options type
+			$options = array();
+		}
+		return $options;
+	}
 	
 	/**
 	 * Same as size() but with width/height assumed to be hidpi width/height
 	 * 
 	 * #pw-internal
 	 * 
-	 * @param $width
-	 * @param $height
+	 * @param int|string $width
+	 * @param int|array $height
 	 * @param array $options See options in size() method. 
 	 * @return Pageimage
 	 *
 	 */
-	public function hidpiSize($width, $height, $options = array()) {
-		$options['hidpi'] = true; 
-		return $this->size($width, $height, $options); 
+	public function hidpiSize($width, $height = 0, $options = array()) {
+		if(is_array($height)) {
+			$height['hidpi'] = true;
+		} else {
+			$options['hidpi'] = true;
+		}
+		return $this->size($width, $height, $options);
+	}
+
+	/**
+	 * Return image of size indicated by predefined setting
+	 * 
+	 * Settings for predefined sizes can be specified in `$config->imageSizes` array. 
+	 * Each named item in this array must contain at least 'width' and 'height, but can also
+	 * contain any other option from the `Pageimage::size()` argument `$options`. 
+	 * 
+	 * @param string $name Image size name
+	 * @param array $options Optionally add or override options defined for size. 
+	 * @return Pageimage
+	 * @since 3.0.151
+	 * @throws WireException If given a $name that is not present in $config->imageSizes
+	 * 
+	 */
+	public function sizeName($name, array $options = array()) {
+		$sizes = $this->wire('config')->imageSizes; 
+		if(!isset($sizes[$name])) throw new WireException("Unknown image size '$name' (not in \$config->imageSizes)"); 
+		$size = $sizes[$name];
+		$options = array_merge($size, $options);
+		unset($options['width'], $options['height']); 
+		if(!isset($size['width'])) $size['width'] = 0;
+		if(!isset($size['height'])) $size['height'] = 0;
+		return $this->size((int) $size['width'], (int) $size['height'], $options);
 	}
 
 	/**
@@ -984,13 +1237,33 @@ class Pageimage extends Pagefile {
 	 * 
 	 * @param int $width Max allowed width
 	 * @param int $height Max allowed height
-	 * @param array $options See `Pageimage::size()` method for options
+	 * @param array $options See `Pageimage::size()` method for options, or these additional options:
+	 *  - `allowOriginal` (bool): Allow original image to be returned if already within max requested dimensions? (default=false)
 	 * @return Pageimage
 	 * 
 	 */
 	public function maxSize($width, $height, $options = array()) {
-		$options['upscaling'] = false;
-		$options['cropping'] = false;
+		
+		$defaults = array(
+			'allowOriginal' => false,
+			'upscaling' => false,
+			'cropping' => false
+		);
+		
+		$options = array_merge($defaults, $options);
+		$adjustedWidth = $width < 1 || $this->width() <= $width ? 0 : $width;
+		$adjustedHeight = $height < 1 || $this->height() <= $height ? 0 : $height;
+
+		// if already within maxSize dimensions then do nothing
+		if(!$adjustedWidth && !$adjustedHeight) {
+			if($options['allowOriginal']) return $this; // image already within target
+			$adjustedWidth = $width;
+			$options['nameHeight'] = $height;
+		} else if(!$adjustedWidth) {
+			$options['nameWidth'] = $width;
+		} else if(!$adjustedHeight) {
+			$options['nameHeight'] = $height;
+		}
 		
 		if($this->wire('config')->installed > 1513336849) { 
 			// New installations from 2017-12-15 forward use an "ms" suffix for images from maxSize() method
@@ -1000,7 +1273,38 @@ class Pageimage extends Pagefile {
 			$options['suffix'] = $suffix;
 		}
 		
-		return $this->size($width, $height, $options);
+		return $this->size($adjustedWidth, $adjustedHeight, $options);
+	}
+
+	/**
+	 * Get ratio of width divided by height
+	 * 
+	 * @return float
+	 * @since 3.0.154
+	 * 
+	 */
+	public function ratio() {
+		$width = $this->width();
+		$height = $this->height();
+		if($width === $height) return 1.0;
+		$ratio = $width / $height;
+		$ratio = round($ratio, 2);
+		if($ratio > 99.99) $ratio = 99.99; // max allowed width>height ratio
+		if($ratio < 0.01) $ratio = 0.01; // min allowed height>width ratio
+		return $ratio;
+	}
+
+	/**
+	 * Get the PageimageVariations helper instancd
+	 * 
+	 * #pw-internal
+	 * 
+	 * @return PageimageVariations
+	 * 
+	 */
+	public function variations() {
+		if($this->variations === null) $this->variations = new PageimageVariations($this);
+		return $this->variations;
 	}
 
 	/**
@@ -1012,7 +1316,12 @@ class Pageimage extends Pagefile {
 	 * #pw-group-variations
 	 *
 	 * @param array $options Optional, one or more options in an associative array of the following: 
-	 * 	- `info` (bool): when true, method returns variation info arrays rather than Pageimage objects
+	 * 	- `info` (bool): when true, method returns variation info arrays rather than Pageimage objects (default=false).
+	 *  - `verbose` (bool|int): Return verbose array of info. If false, returns only filenames (default=true). 
+	 *     This option does nothing unless the `info` option is true. Also note that if verbose is false, then all options
+	 *     following this one no longer apply (since it is no longer returning width/height info).
+	 *     When integer 1, returned info array also includes Pageimage variation options in 'pageimage' index of
+	 *     returned arrays (since 3.0.137).
 	 * 	- `width` (int): only variations with given width will be returned
 	 * 	- `height` (int): only variations with given height will be returned
 	 * 	- `width>=` (int): only variations with width greater than or equal to given will be returned
@@ -1020,53 +1329,18 @@ class Pageimage extends Pagefile {
 	 * 	- `width<=` (int): only variations with width less than or equal to given will be returned
 	 * 	- `height<=` (int): only variations with height less than or equal to given will be returned
 	 * 	- `suffix` (string): only variations having the given suffix will be returned
+	 *  - `suffixes` (array): only variations having one of the given suffixes will be returned
+	 *  - `noSuffix` (string): exclude variations having this suffix
+	 *  - `noSuffixes` (array): exclude variations having any of these suffixes
+	 *  - `name` (string): only variations containing this text in filename will be returned (case insensitive)
+	 *  - `noName` (string): only variations NOT containing this text in filename will be returned (case insensitive)
+	 *  - `regexName` (string): only variations that match this PCRE regex will be returned
 	 * @return Pageimages|array Returns Pageimages array of Pageimage instances. 
 	 *  Only returns regular array if provided `$options['info']` is true.
 	 *
 	 */
 	public function getVariations(array $options = array()) {
-
-		if(!is_null($this->variations)) return $this->variations; 
-
-		$variations = $this->wire(new Pageimages($this->pagefiles->page)); 
-		$dir = new \DirectoryIterator($this->pagefiles->path); 
-		$infos = array();
-
-		foreach($dir as $file) {
-			if($file->isDir() || $file->isDot()) continue; 			
-			$info = $this->isVariation($file->getFilename());
-			if(!$info) continue; 
-			$allow = true;
-			if(count($options)) foreach($options as $option => $value) {
-				switch($option) {
-					case 'width': $allow = $info['width'] == $value; break;
-					case 'width>=': $allow = $info['width'] >= $value; break;
-					case 'width<=': $allow = $info['width'] <= $value; break;
-					case 'height': $allow = $info['height'] == $value; break;
-					case 'height>=': $allow = $info['height'] >= $value; break;
-					case 'height<=': $allow = $info['height'] <= $value; break;
-					case 'suffix': $allow = in_array($value, $info['suffix']); break;
-				}
-			}
-			if(!$allow) continue; 
-			if(!empty($options['info'])) {
-				$infos[$file->getBasename()] = $info;
-			} else {
-				$pageimage = clone $this; 
-				$pathname = $file->getPathname();
-				if(DIRECTORY_SEPARATOR != '/') $pathname = str_replace(DIRECTORY_SEPARATOR, '/', $pathname);
-				$pageimage->setFilename($pathname); 
-				$pageimage->setOriginal($this); 
-				$variations->add($pageimage); 
-			}
-		}
-
-		if(!empty($options['info'])) {
-			return $infos;
-		} else {
-			$this->variations = $variations;
-			return $variations; 
-		}
+		return $this->variations()->find($options);
 	}
 
 	/**
@@ -1100,118 +1374,7 @@ class Pageimage extends Pagefile {
 	 * 
 	 */
 	public function ___rebuildVariations($mode = 0, array $suffix = array(), array $options = array()) {
-		
-		$skipped = array();
-		$rebuilt = array();
-		$errors = array();
-		$reasons = array();
-		$options['forceNew'] = true; 
-		
-		foreach($this->getVariations(array('info' => true)) as $info) {
-		
-			$o = $options;
-			unset($o['cropping']); 
-			$skip = false; 
-			$name = $info['name'];
-			
-			if($info['crop'] && !$mode) {
-				// skip crops when mode is 0
-				$reasons[$name] = "$name: Crop is $info[crop] and mode is 0";
-				$skip = true; 
-				
-			} else if(count($info['suffix'])) {
-				// check suffixes 
-				foreach($info['suffix'] as $k => $s) {
-					if($s === 'hidpi') {
-						// allow hidpi to passthru
-						$o['hidpi'] = true;
-					} else if($s == 'is') {
-						// this is a known core suffix that we allow
-					} else if(strpos($s, 'cropx') === 0) {
-						// skip cropx suffix (already known from $info[crop])
-						unset($info['suffix'][$k]);
-						continue; 
-					} else if(strpos($s, 'pid') === 0 && preg_match('/^pid\d+$/', $s)) {
-						// allow pid123 to pass through 
-					} else if(in_array($s, $suffix)) {
-						// suffix is one provided in $suffix argument
-						if($mode == 2) {
-							// mode 2 where $suffix is an exclusion list
-							$skip = true;
-							$reasons[$name] = "$name: Suffix '$s' is one provided in exclusion list (mode==true)";
-						} else {
-							// allowed suffix
-						}
-					} else {
-						// image has suffix not specified in $suffix argument
-						if($mode == 0 || $mode == 1 || $mode == 3) {
-							$skip = true;
-							$reasons[$name] = "$name: Image has suffix '$s' not provided in allowed list: " . implode(', ', $suffix);
-						}
-					}
-				}
-			}
-			
-			if($mode == 4 && ($info['width'] == 0 || $info['height'] == 0)) {
-				// skip images that don't specify both width and height
-				$skip = true;
-			}
-			
-			if($skip) {
-				$skipped[] = $name; 
-				continue; 
-			}
-		
-			// rebuild the variation
-			$o['forceNew'] = true; 
-			$o['suffix'] = $info['suffix'];
-			if(is_file($info['path'])) unlink($info['path']); 
-		
-			/*
-			if(!$info['width'] && $info['actualWidth']) {
-				$info['width'] = $info['actualWidth'];
-				$options['nameWidth'] = 0;
-			}
-			if(!$info['height'] && $info['actualHeight']) {
-				$info['height'] = $info['actualHeight'];
-				$options['nameHeight'] = 0;
-			}
-			*/
-			
-			if($info['crop'] && preg_match('/^x(\d+)y(\d+)$/', $info['crop'], $matches)) {
-				// dimensional cropping info contained in filename
-				$cropX = (int) $matches[1];
-				$cropY = (int) $matches[2];
-				$variation = $this->crop($cropX, $cropY, $info['width'], $info['height'], $options);
-
-			} else if($info['crop']) {
-				// direct cropping info contained in filename
-				$options['cropping'] = $info['crop'];
-				$variation = $this->size($info['width'], $info['height'], $options);
-				
-			} else if($this->hasFocus) {
-				// crop to focus area, which the size() method will determine on its own
-				$variation = $this->size($info['width'], $info['height'], $options);
-				
-			} else {
-				// no crop, no focus, just resize
-				$variation = $this->size($info['width'], $info['height'], $options);
-			}
-			
-			if($variation) {
-				if($variation->name != $name) rename($variation->filename(), $info['path']); 
-				$rebuilt[] = $name;
-			} else {
-				$errors[] = $name;
-			}
-		}
-		
-		return array(
-			'rebuilt' => $rebuilt, 
-			'skipped' => $skipped, 
-			'reasons' => $reasons, 
-			'errors' => $errors
-		); 
+		return $this->variations()->rebuild($mode, $suffix, $options);
 	}
 
 	/**
@@ -1238,148 +1401,14 @@ class Pageimage extends Pagefile {
 	 * #pw-group-variations
 	 * 
 	 * @param string $basename Filename to check (basename, which excludes path)
-	 * @param bool $allowSelf When true, it will return variation info even if same as current Pageimage.
-	 * @return bool|array Returns false if not a variation, or array of info if it is.
+	 * @param array|bool $options Array of options to modify behavior, or boolean to only specify `allowSelf` option.
+	 *  - `allowSelf` (bool): When true, it will return variation info even if same as current Pageimage. (default=false)
+	 *  - `verbose` (bool): Return verbose array of info? If false, just returns basename (string) or false. (default=true)
+	 * @return bool|string|array Returns false if not a variation, or array (verbose) or string (non-verbose) of info if it is.
 	 *
 	 */
-	public function ___isVariation($basename, $allowSelf = false) {
-
-		static $level = 0;
-		$variationName = basename($basename);
-		$originalName = $this->basename; 
-	
-		// that that everything from the beginning up to the first period is exactly the same
-		// otherwise, they are different source files
-		$test1 = substr($variationName, 0, strpos($variationName, '.'));
-		$test2 = substr($originalName, 0, strpos($originalName, '.')); 
-		if($test1 !== $test2) return false;
-
-		// remove extension from originalName
-		$originalName = basename($originalName, "." . $this->ext());  
-		
-		// if originalName is already a variation filename, remove the variation info from it.
-		// reduce to original name, i.e. all info after (and including) a period
-		if(strpos($originalName, '.') && preg_match('/^([^.]+)\.(?:\d+x\d+|-[_a-z0-9]+)/', $originalName, $matches)) {
-			$originalName = $matches[1];
-		}
-	
-		// if file is the same as the original, then it's not a variation
-		if(!$allowSelf && $variationName == $this->basename) return false;
-		
-		// if file doesn't start with the original name then it's not a variation
-		if(strpos($variationName, $originalName) !== 0) return false; 
-	
-		// get down to the meat and the base
-		// meat is the part of the filename containing variation info like dimensions, crop, suffix, etc.
-		// base is the part before that, which may include parent meat
-		$pos = strrpos($variationName, '.'); // get extension
-		$ext = substr($variationName, $pos); 
-		$base = substr($variationName, 0, $pos); // get without extension
-		$rpos = strrpos($base, '.'); // get last data chunk after dot
-		if($rpos !== false) {
-			$meat = substr($base, $rpos+1) . $ext; // the part of the filename we're interested in
-			$base = substr($base, 0, $rpos); // the rest of the filename
-			$parent = "$base." . $this->ext();
-		} else {
-			$meat = $variationName;
-			$parent = null;
-		}
-
-		// identify parent and any parent suffixes
-		$suffixAll = array();
-		while(($pos = strrpos($base, '.')) !== false) {
-			$part = substr($base, $pos+1); 
-			// if(is_null($parent)) {
-				// $parent = substr($base, 0, $pos) . $ext;
-				//$parent = $originalName . "." . $part . $ext;
-			// }
-			$base = substr($base, 0, $pos); 
-			while(($rpos = strrpos($part, '-')) !== false) {
-				$suffixAll[] = substr($part, $rpos+1); 
-				$part = substr($part, 0, $rpos); 
-			}
-		}
-
-		// variation name with size dimensions and optionally suffix
-		$re1 = '/^'  . 
-			'(\d+)x(\d+)' .					// 50x50	
-			'([pd]\d+x\d+|[a-z]{1,2})?' . 	// nw or p30x40 or d30x40
-			'(?:-([-_a-z0-9]+))?' . 		// -suffix1 or -suffix1-suffix2, etc.
-			'\.' . $this->ext() . 			// .jpg
-			'$/';
-	
-		// variation name with suffix only
-		$re2 = '/^' . 						
-			'-([-_a-z0-9]+)' . 				// suffix1 or suffix1-suffix2, etc. 
-			'(?:\.' . 						// optional extras for dimensions/crop, starts with period
-				'(\d+)x(\d+)' .				// optional 50x50	
-				'([pd]\d+x\d+|[a-z]{1,2})?' . // nw or p30x40 or d30x40
-			')?' .
-			'\.' . $this->ext() . 			// .jpg
-			'$/'; 
-
-		// if regex does not match, return false
-		if(preg_match($re1, $meat, $matches)) {
-			// this is a variation with dimensions, return array of info
-			$info = array(
-				'name' => $basename, 
-				'url' => $this->pagefiles->url . $basename, 
-				'path' => $this->pagefiles->path . $basename, 
-				'original' => $originalName . '.' . $this->ext(),
-				'width' => (int) $matches[1],
-				'height' => (int) $matches[2],
-				'crop' => (isset($matches[3]) ? $matches[3] : ''),
-				'suffix' => (isset($matches[4]) ? explode('-', $matches[4]) : array()),
-				);
-
-		} else if(preg_match($re2, $meat, $matches)) {
-		
-			// this is a variation only with suffix
-			$info = array(
-				'name' => $basename, 
-				'url' => $this->pagefiles->url . $basename,
-				'path' => $this->pagefiles->path . $basename, 
-				'original' => $originalName . '.' . $this->ext(),
-				'width' => (isset($matches[2]) ? (int) $matches[2] : 0),
-				'height' => (isset($matches[3]) ? (int) $matches[3] : 0),
-				'crop' => (isset($matches[4]) ? $matches[4] : ''),
-				'suffix' => explode('-', $matches[1]),
-				);
-			
-		} else {
-			return false; 
-		}
-
-		$actualInfo = $this->getImageInfo($info['path']); 
-		$info['actualWidth'] = $actualInfo['width'];
-		$info['actualHeight'] = $actualInfo['height'];
-		$info['hidpiWidth'] = $this->hidpiWidth(0, $info['width']);
-		$info['hidpiHeight'] = $this->hidpiWidth(0, $info['height']); 
-	
-		if(empty($info['crop'])) {
-			// attempt to extract crop info from suffix
-			foreach($info['suffix'] as $key => $suffix) {
-				if(strpos($suffix, 'cropx') === 0) {
-					$info['crop'] = ltrim($suffix, 'crop'); // i.e. x123y456
-				}
-			}
-		}
-
-		if($parent) {
-			// suffixAll includes all parent suffix in addition to current suffix
-			if(!$level) $info['suffixAll'] = array_unique(array_merge($info['suffix'], $suffixAll)); 
-			// parent property is set with more variation info, when available
-			$level++;
-			$info['parentName'] = $parent; 
-			$info['parent'] = $this->isVariation($parent);
-			$level--;
-		}
-
-		if(!$this->original) {
-			$this->original = $this->pagefiles->get($info['original']);
-		}
-		
-		return $info;
+	public function ___isVariation($basename, $options = array()) {
+		return $this->variations()->getInfo($basename, $options);
 	}
 
 	/**
@@ -1387,19 +1416,14 @@ class Pageimage extends Pagefile {
 	 * 
 	 * #pw-group-variations
 	 *
-	 * @return $this
+	 * @param array $options See options for getVariations() method to limit what variations are removed, plus these:
+	 *  - `dryRun` (bool): Do not remove now and instead only return the filenames of variations that would be deleted (default=false).
+	 *  - `getFiles` (bool): Return deleted filenames? Also assumed if the test option is used (default=false). 
+	 * @return $this|array Returns $this by default, or array of deleted filenames if the `getFiles` option is specified
 	 *
 	 */
-	public function removeVariations() {
-
-		$variations = $this->getVariations();	
-
-		foreach($variations as $variation) {
-			if(is_file($variation->filename)) unlink($variation->filename); 			
-		}
-
-		$this->variations = null;
-		return $this;	
+	public function removeVariations(array $options = array()) {
+		return $this->variations()->remove($options);
 	}
 
 	/**
@@ -1445,7 +1469,7 @@ class Pageimage extends Pagefile {
 	}
 
 	/**
-	 * Copy this Pageimage and any of it's variations to another path
+	 * Copy this Pageimage and any of its variations to another path
 	 * 
 	 * #pw-internal
 	 *
@@ -1456,16 +1480,152 @@ class Pageimage extends Pagefile {
 	public function copyToPath($path) {
 		if(parent::copyToPath($path)) {
 			foreach($this->getVariations() as $variation) {
-				if(is_file($variation->filename)) {
-					copy($variation->filename, $path . $variation->basename); 
-					if($this->config->chmodFile) chmod($path . $variation->basename, octdec($this->config->chmodFile));
-				}
+				if(!is_file($variation->filename)) continue;
+				$this->wire('files')->copy($variation->filename, $path); 
 			}
 			return true; 
 		}
 		return false; 
 	}
 
+	/**
+	 * Render markup for this image (optionally using a provided markup template string and/or image size options)
+	 * 
+	 * Given template string can contain any of the placeholders, which will be replaced: 
+	 *  - `{url}` or `{src}` Image URL (typically used for src attribute)
+	 *  - `{httpUrl}` File URL with scheme and hostname (alternate for src attribute)
+	 *  - `{URL}` Same as url but with cache busting query string
+	 *  - `{HTTPURL}` Same as httpUrl but with cache busting query string
+	 *  - `{description}` or `{alt}` Image description (typically used in alt attribute)
+	 *  - `{tags}` File tags (might be useful in class attribute)
+	 *  - `{width}` Width of image
+	 *  - `{height}` Height of image
+	 *  - `{hidpiWidth}` HiDPI width of image
+	 *  - `{hidpiHeight}` HiDPI height of image
+	 *  - `{ext}` File extension
+	 *  - `{original.name}` Replace “name” with any of the properties above to refer to original image.
+	 *     If there is no original image then these just refer back to the current image. 
+	 * 
+	 * ~~~~~
+	 * $image = $page->images->first();
+	 * if($image) {
+	 *   // default output
+	 *   echo $image->render(); 
+	 * 
+	 *   // custom output
+	 *   echo $image->render("<img class='pw-image' src='{url}' alt='{alt}'>");
+	 * 
+	 *   // custom output with options
+	 *   echo $image->render("<img src='{url}' alt='{alt}'>", [ 'width' => 300 ]);
+	 *
+	 *   // options can go in first argument if you prefer
+	 *   echo $image->render([ 'width' => 300, 'height' => 200 ]);
+	 *
+	 *   // if only width/height are needed, they can also be specified as a string (1st or 2nd arg)
+	 *   echo $image->render('300x200');
+	 * 
+	 *   // custom output with link to original/full-size and square crop of 300x300 for thumbnail
+	 *   echo $image->render([
+	 *     'markup' => "<a href='{original.url}'><img src='{url}' alt='{alt}'></a>",
+	 *     'width' => 300,
+	 *     'height' => 300
+	 *   ]);
+	 * }
+	 * ~~~~~
+	 * 
+	 * @param string|array $markup Markup template string or optional $options array if you do not want the template string here.
+	 * @param array|string $options Optionally resize image with these options sent to size() method:
+	 *  - `width` (int): Target width or 0 for current image size (or proportional if height specified).
+	 *  - `height` (int): Target height or 0 for current image size (or proportional if width specified).
+	 *  - `markup` (string): Markup template string (same as $markup argument), or omit for default (same as $markup argument).
+	 *  - `link` (bool): Link image to original size? Though you may prefer to do this with your own $markup (see examples). (default=false)
+	 *  - `alt` (string): Text to use for “alt” attribute (default=text from image description).
+	 *  - `class` (string): Text to use for “class” attribute, if `{class}` present in markup (default='').
+	 *  - Plus any option available to the $options argument on the `Pageimage::size()` method. 
+	 *  - If you only need width and/or height, you can specify a width x height string, i.e. 123x456 (use 0 for proportional).
+	 * @return string
+	 * @see Pageimages::render()
+	 * @since 3.0.126
+	 * 
+	 */
+	public function ___render($markup = '', $options = array()) {
+		
+		if(is_array($markup) || ($markup && strpos($markup, '}') === false)) {
+			$options = $markup;
+			$markup = isset($options['markup']) ? $options['markup'] : '';
+		} 
+		
+		if(empty($markup)) {
+			// provide default markup
+			if(empty($options['class'])) {
+				$markup = "<img src='{url}' alt='{alt}' />";
+			} else {
+				$markup = "<img src='{url}' alt='{alt}' class='{class}' />";
+			}
+		}
+		
+		if(is_string($options)) {
+			if(ctype_digit(str_ireplace('x', '', $options))) {
+				if(stripos($options, 'x') === false) $options .= 'x0';
+				list($w, $h) = explode('x', strtolower($options));
+				$options = array('width' => (int) $w, 'height' => (int) $h);
+			} else {
+				$options = array();
+			}
+		}
+
+		/** @var Sanitizer $sanitizer */
+		$sanitizer = $this->wire('sanitizer');
+		$image = $this;
+		$original = null;
+		$replacements = array();
+		$properties = array(
+			'url', 'httpUrl', 'URL', 'HTTPURL',
+			'description', 'alt', 'tags', 'ext', 'class',
+			'width', 'height', 'hidpiWidth', 'hidpiHeight',
+		);
+		
+		if(!empty($options['width']) || !empty($options['height'])) {
+			$w = isset($options['width']) ? (int) $options['width'] : 0;
+			$h = isset($options['height']) ? (int) $options['height'] : 0;
+			$original = $this;
+			$image = $this->size($w, $h, $options);
+		}
+		
+		if(!empty($options['link']) && strpos($markup, '<a ') === false) {
+			$markup = "<a href='{original.url}'>$markup</a>";
+		}
+		
+		foreach($properties as $property) {
+			$tag = '{' . $property . '}';
+			if(strpos($markup, $tag) === false) continue;
+			if(($property === 'alt' || $property === 'class') && isset($options[$property])) {
+				$value = $sanitizer->entities($options[$property]);
+			} else {
+				$value = $sanitizer->entities1($image->get($property));
+			}
+			$replacements[$tag] = $value;
+		}
+		
+		if(strpos($markup, '{class}')) {
+			$class = isset($options['class']) ? $this->wire('sanitizer')->entities($options['class']) : 'pw-pageimage';
+			$replacements["{class}"] = $class; 
+		}
+		
+		if(strpos($markup, '{original.') !== false) {
+			if(!$original) $original = $image->getOriginal();
+			if(!$original) $original = $image;
+			foreach($properties as $property) {
+				$tag = '{original.' . $property . '}';
+				if(strpos($markup, $tag) === false) continue;
+				$value = $sanitizer->entities1($original->get($property));
+				$replacements[$tag] = $value;
+			}
+		}
+		
+		return str_replace(array_keys($replacements), array_values($replacements), $markup);
+	}
+		
 	/**
 	 * Install this Pagefile
 	 *
@@ -1483,6 +1643,146 @@ class Pageimage extends Pagefile {
 			parent::unlink();
 			throw new WireException($this->_('Unable to install invalid image')); 
 		}
+	}
+
+	/**
+	 * Get WebP "extra" version of this Pageimage
+	 *
+	 * @return PagefileExtra
+	 * @since 3.0.132
+	 *
+	 */
+	public function webp() {
+		$webp = $this->extras('webp');
+		if(!$webp) {
+			$webp = new PagefileExtra($this, 'webp');
+			$webp->setArray($this->wire('config')->webpOptions);
+			$this->extras('webp', $webp);
+			$webp->addHookAfter('create', $this, 'hookWebpCreate'); 
+		}
+		return $webp;
+	}
+
+	/**
+	 * Hook to PageimageExtra (.webp) create method
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param HookEvent $event
+	 * 
+	 */
+	public function hookWebpCreate(HookEvent $event) {
+		$original = $this->original;
+		/** @var PagefileExtra $webp */
+		$webp = $event->object;
+		$webp->unlink();
+		if($original && isset($this->sizeOptions['_width'])) {
+			// we are in an image resized from an original
+			$options = $this->sizeOptions;
+			$width = $options['_width'];
+			$height = $options['_height'];
+		} else {
+			// we are the original
+			// create a file with same name as original but with .webp extension
+			$original = $this;
+			$options = array(
+				'allowOriginal' => false, 
+				'webpName' => $webp->useSrcExt ? $this->basename() : basename($this->basename(), ".$this->ext"),
+				'webpOnly' => true
+			);
+			$width = $this->width;
+			$height = 0;
+		}
+		$options['webpAdd'] = true;
+		try {
+			$original->size($width, $height, $options);
+		} catch(\Exception $e) {
+			$this->error = ($this->error ? "$this->error - " : "") . $e->getMessage();
+		}
+		
+		$error = $this->error;
+		$event->return = empty($error); 
+	}
+	
+	/**
+	 * Get all extras, add an extra, or get an extra 
+	 *
+	 * #pw-internal
+	 *
+	 * @param string $name
+	 * @param PagefileExtra $value
+	 * @return PagefileExtra[]
+	 * @since 3.0.132
+	 *
+	 */
+	public function extras($name = null, PagefileExtra $value = null) {
+		if($name) return parent::extras($name, $value); 
+		$extras = parent::extras();
+		$extras['webp'] = $this->webp();
+		return $extras;
+	}
+	
+	/**
+	 * Replace file with another
+	 *
+	 * Should be followed up with a save() to ensure related properties are also committed to DB.
+	 *
+	 * #pw-internal
+	 *
+	 * @param string $filename File to replace current one with
+	 * @param bool $move Move given $filename rather than copy? (default=true)
+	 * @return bool
+	 * @throws WireException
+	 * @since 3.0.154
+	 *
+	 */
+	public function replaceFile($filename, $move = true) {
+		if(!parent::replaceFile($filename, $move)) return false;
+		$this->getImageInfo(true);
+		return true;
+	}
+
+	public function __isset($key) {
+		if($key === 'original') return $this->original !== null;
+		return parent::__isset($key);
+	}
+
+	/**
+	 * Basic debug info
+	 * 
+	 * @return array
+	 * 
+	 */
+	public function __debugInfo() {
+		return $this->debugInfo->getBasicDebugInfo();
+	}
+
+	/**
+	 * Verbose debug info (via @horst)
+	 * 
+	 * Optionally with individual options array.
+	 *
+	 * @param array $options The individual options you also passes with your image variation creation
+	 * @param string $returnType 'string'|'array'|'object', default is 'string' and returns markup or plain text
+	 * @return array|object|string
+	 * @since 3.0.132
+	 *
+	 */
+	public function getDebugInfo($options = array(), $returnType = 'string') {
+		return $this->debugInfo->getVerboseDebugInfo($options, $returnType);
+	}
+
+	/**
+	 * Get debug info from parent class
+	 * 
+	 * #pw-internal
+	 * 
+	 * @return array
+	 * @since 3.0.132
+	 * 
+	 */
+	public function _parentDebugInfo() {
+		return parent::__debugInfo();
 	}
 
 }

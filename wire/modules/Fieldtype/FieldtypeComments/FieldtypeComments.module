@@ -21,16 +21,20 @@ require_once($dirname . "/CommentStars.php");
 require_once($dirname . "/CommentArray.php"); 
 require_once($dirname . "/CommentList.php"); 
 require_once($dirname . "/CommentForm.php"); 
+require_once($dirname . "/CommentField.php"); 
 
 /**
  * ProcessWire Comments Fieldtype
  *
  * A field that stores user posted comments for a single Page. 
  * 
- * @method mixed updateComment(Page $page, $field, Comment $comment, array $properties)
- * @method commentDeleted(Page $page, Field $field, Comment $comment, $notes = '') #pw-hooker
- * @method commentApproved(Page $page, Field $field, Comment $comment, $notes = '') #pw-hooker
- * @method commentUnapproved(Page $page, Field $field, Comment $comment, $notes = '') #pw-hooker
+ * @method mixed updateComment(Page $page, $field, Comment $comment, array $properties) Update an existing comment
+ * @method void commentDeleted(Page $page, Field $field, Comment $comment, $notes = '') #pw-hooker
+ * @method void commentApproved(Page $page, Field $field, Comment $comment, $notes = '') #pw-hooker
+ * @method void commentUnapproved(Page $page, Field $field, Comment $comment, $notes = '') #pw-hooker
+ * @method void commentAddReady(Page $page, Field $field, Comment $comment) #pw-hooker
+ * @method void commentAdded(Page $page, Field $field, Comment $comment) #pw-hooker
+ * 
  *
  */
 class FieldtypeComments extends FieldtypeMulti {
@@ -70,13 +74,13 @@ class FieldtypeComments extends FieldtypeMulti {
 	public static function getModuleInfo() {
 		return array(
 			'title' => __('Comments', __FILE__),
-			'version' => 107,
+			'version' => 108,
 			'summary' => __('Field that stores user posted comments for a single Page', __FILE__),
 			'installs' => array('InputfieldCommentsAdmin'),
 			);
 	}
 	
-	public function __construct() {
+	public function wired() {
 		if($this->wire('config')->ajax) {
 			$this->addHookBefore('Page::render', $this, 'checkVoteAction');
 		}
@@ -101,10 +105,15 @@ class FieldtypeComments extends FieldtypeMulti {
 	}
 
 	public function getInputfield(Page $page, Field $field) {
+		/** @var InputfieldCommentsAdmin $inputfield */
 		$inputfield = $this->modules->get('InputfieldCommentsAdmin'); 
 		if(!$inputfield) return null; 
-		$inputfield->class = $this->className();
+		$inputfield->set('class', $this->className());
 		return $inputfield; 
+	}
+	
+	public function getFieldClass(array $a = array()) {
+		return 'CommentField';
 	}
 
 	/**
@@ -115,7 +124,7 @@ class FieldtypeComments extends FieldtypeMulti {
 	 * @param string $subfield
 	 * @param string $operator
 	 * @param mixed $value
-	 * @return DatabaseQuerySelect
+	 * @return DatabaseQuery|DatabaseQuerySelect
 	 *
 	 */
 	public function getMatchQuery($query, $table, $subfield, $operator, $value) {
@@ -167,7 +176,7 @@ class FieldtypeComments extends FieldtypeMulti {
 			$comment->setIsLoaded(true); 
 		}
 		
-		if($field->sortNewest) $commentArray->sort("-created"); 
+		if($field->get('sortNewest')) $commentArray->sort("-created"); 
 		$commentArray->resetTrackChanges(true); 
 		
 		return $commentArray;  
@@ -179,14 +188,16 @@ class FieldtypeComments extends FieldtypeMulti {
 	 * @param Page $page
 	 * @param Field $field
 	 * @param string|int|array|object $value
-	 * @return string|int
+	 * @return array
 	 *
 	 */
 	public function ___sleepValue(Page $page, Field $field, $value) {
 
 		$sleepValue = array();
 		if(!$value instanceof CommentArray) return $sleepValue; 
-		$schemaVersion = $field->schemaVersion;
+		$schemaVersion = $field->get('schemaVersion');
+		$sanitizer = $this->wire('sanitizer'); /** @var Sanitizer $sanitizer */
+		$maxIdxLen = $this->wire('database')->getMaxIndexLength();
 
 		foreach($value as $comment) {
 
@@ -200,14 +211,13 @@ class FieldtypeComments extends FieldtypeMulti {
 				'id' => $comment->id, 
 				'status' => $comment->status, 
 				'data' => $comment->text, 
-				'cite' => $comment->cite, 
-				'email' => $comment->email, 
+				'cite' => $sanitizer->maxLength($comment->cite, 128, 128 * 3), 
+				'email' => $sanitizer->maxLength($comment->email, 128, 128 * 3), 
 				'created' => $comment->created, 
 				'created_users_id' => $comment->created_users_id, 
-				'ip' => $comment->ip, 
-				'user_agent' => $comment->user_agent, 
-				); 
-			
+				'ip' => $sanitizer->maxLength($comment->ip, 15), 
+				'user_agent' => $sanitizer->maxLength($comment->user_agent, $maxIdxLen, $maxIdxLen * 3), 
+			); 
 
 			if($schemaVersion > 0) $a['website'] = $comment->website;
 			if($schemaVersion > 1) {
@@ -252,18 +262,18 @@ class FieldtypeComments extends FieldtypeMulti {
 		$submitSpam = false; 
 		$submitHam = false; 
 
-		if($comment->prevStatus === Comment::statusSpam && $comment->status === Comment::statusApproved) {
+		if($comment->prevStatus === Comment::statusSpam && $comment->status >= Comment::statusApproved) {
 			$submitHam = true; // identified a false positive
 			$this->commentApproved($page, $field, $comment, 'Existing comment changed from spam to approved'); 
 
-		} else if($comment->status === Comment::statusSpam && $comment->prevStatus === Comment::statusApproved) {
+		} else if($comment->status === Comment::statusSpam && $comment->prevStatus >= Comment::statusApproved) {
 			$submitSpam = true; // a missed spam
 			$this->commentUnapproved($page, $field, $comment); 
 			
-		} else if($comment->prevStatus === Comment::statusPending && $comment->status === Comment::statusApproved) {
+		} else if($comment->prevStatus === Comment::statusPending && $comment->status >= Comment::statusApproved) {
 			$this->commentApproved($page, $field, $comment, 'Existing comment changed from pending to approved'); 
 			
-		} else if($comment->status === Comment::statusPending && $comment->prevStatus === Comment::statusApproved) {
+		} else if($comment->status === Comment::statusPending && $comment->prevStatus >= Comment::statusApproved) {
 			$this->commentUnapproved($page, $field, $comment); 
 		}
 
@@ -328,11 +338,11 @@ class FieldtypeComments extends FieldtypeMulti {
 		}
 
 		if($comment->status != Comment::statusSpam) {
-			if($field->moderate == self::moderateNone) {
+			if($field->get('moderate') == self::moderateNone) {
 				$comment->status = Comment::statusApproved; 
 				$this->commentApproved($page, $field, $comment, 'New comment approved / moderation is off'); 
 
-			} else if($field->moderate == self::moderateNew && $comment->email) {
+			} else if($field->get('moderate') == self::moderateNew && $comment->email) {
 				$database = $this->wire('database');
 				$table = $database->escapeTable($field->table); 
 				$query = $database->prepare("SELECT count(*) FROM `$table`  WHERE status=:status AND email=:email"); 
@@ -353,7 +363,6 @@ class FieldtypeComments extends FieldtypeMulti {
 		$no = $this->wire(new CommentNotifications($page, $field)); 
 		$no->sendAdminNotificationEmail($comment); 
 		$this->commentMaintenance($field);
-
 	}
 
 	/**
@@ -368,7 +377,7 @@ class FieldtypeComments extends FieldtypeMulti {
 		$table = $database->escapeTable($field->table);
 		
 		// delete old spam
-		$expiredTime = time() - (86400 * $field->deleteSpamDays);
+		$expiredTime = time() - (86400 * $field->get('deleteSpamDays'));
 		$query = $database->prepare("DELETE FROM `$table` WHERE status=:status AND created < :expiredTime");
 		$query->bindValue(":status", Comment::statusSpam, \PDO::PARAM_INT);
 		$query->bindValue(":expiredTime", $expiredTime); 
@@ -471,7 +480,7 @@ class FieldtypeComments extends FieldtypeMulti {
 					CREATE TABLE `{$table}_votes` (
 					`comment_id` int unsigned NOT NULL,
 					`vote` tinyint NOT NULL, 
-					`created` TIMESTAMP NOT NULL, 
+					`created` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, 
 					`ip` VARCHAR(15) NOT NULL default '', 
 					`user_id` int unsigned NOT NULL default 0, 
 					PRIMARY KEY (`comment_id`, `ip`, `vote`), 
@@ -516,9 +525,10 @@ class FieldtypeComments extends FieldtypeMulti {
 			}
  		}
 
-		if(((int) $field->schemaVersion) < $schemaVersion) {
-			$this->message("Updating schema version of '{$field->name}' from $field->schemaVersion to $schemaVersion", Notice::log);
-			$field->schemaVersion = $schemaVersion;
+ 		$_schemaVersion = (int) $field->get('schemaVersion');
+		if($_schemaVersion < $schemaVersion) {
+			$this->message("Updating schema version of '{$field->name}' from $_schemaVersion to $schemaVersion", Notice::log);
+			$field->set('schemaVersion', $schemaVersion);
 			$field->save();
 		}
 
@@ -535,7 +545,7 @@ class FieldtypeComments extends FieldtypeMulti {
 		$schema['ip'] = "varchar(15) NOT NULL default ''";
 		$schema['user_agent'] = "varchar($maxIndexLength) NOT NULL default ''";
 
-		$schemaVersion = $field->schemaVersion;
+		$schemaVersion = $field->get('schemaVersion');
 		if($schemaVersion > 0) $schema['website'] = $websiteSchema;
 		if($schemaVersion > 1) {
 			$schema['parent_id'] = $parentSchema;
@@ -594,12 +604,6 @@ class FieldtypeComments extends FieldtypeMulti {
 			foreach($itemsRemoved as $item) {
 				if(!$item->id) continue; 
 				$this->deleteComment($page, $field, $item, 'deleted from savePageField()'); 
-				/*
-				$query = $database->prepare("DELETE FROM `$table` WHERE id=:item_id AND pages_id=:pages_id"); 
-				$query->bindValue(":item_id", $item->id, \PDO::PARAM_INT);
-				$query->bindValue(":pages_id", $page->id, \PDO::PARAM_INT);
-				$query->execute();
-				*/
 			}
 		}
 
@@ -650,21 +654,30 @@ class FieldtypeComments extends FieldtypeMulti {
 				$sql .= "sort=:sort"; 
 				$binds['sort'] = ++$maxSort; 
 			}
-			$query = $database->prepare($sql); 
-			foreach($binds as $k => $v) $query->bindValue(":$k", $v); 
 			try {
+				$query = $database->prepare($sql);
+				foreach($binds as $k => $v) {
+					$query->bindValue(":$k", $v);
+				}
 				$result = $query->execute();
-				if(!$value['id']) {
+				if($result && !$value['id']) {
 					// populate newly added comment ID to Comment object
 					$value['id'] = $database->lastInsertId();
 					foreach($allItems as $item) {
-						if(!$item->id && $item->code === $value['code']) $item->id = $value['id'];
+						if(!$item->id && $item->code === $value['code']) {
+							$item->id = $value['id'];
+							$this->commentAdded($page, $field, $item); 
+						}
 					}
 				}
+				$error = '';
 			} catch(\Exception $e) {
 				$result = false; 
+				$error = $e->getMessage();
 			}
-			if(!$result) $this->error("Error saving item $value[id] in savePageField", Notice::log);
+			if(!$result) {
+				$this->error("Error saving comment id $value[id]: $error", Notice::log);
+			}
 		}	
 		
 		return true; 
@@ -780,7 +793,7 @@ class FieldtypeComments extends FieldtypeMulti {
 		$f->addOption(0, $disabledLabel);
 		$f->addOption(Comment::flagNotifyReply, $this->_('Users can receive email notifications of replies to their comment only'));
 		$f->addOption(Comment::flagNotifyAll, $this->_('Users can receive email notifications for all new comments on the page'));
-		$f->attr('value', (int) $field->useNotify);
+		$f->attr('value', (int) $field->get('useNotify'));
 		$fieldset->append($f);
 
 		// ---------------------------------------
@@ -851,7 +864,7 @@ class FieldtypeComments extends FieldtypeMulti {
 		$name = 'dateFormat';
 		$f = $this->wire('modules')->get('InputfieldText');
 		$f->attr('name', $name);
-		$f->attr('value', $field->dateFormat ? $field->dateFormat : 'relative');
+		$f->attr('value', $field->get('dateFormat') ? $field->get('dateFormat') : 'relative');
 		$f->label = $this->_('Date/time format (for comment list)');
 		$f->description = $this->_('Enter the date/time format you want the default comment list output to use. May be a PHP [date](http://php.net/manual/en/function.date.php) or [strftime](http://php.net/manual/en/function.strftime.php) format. May also be "relative" for relative date format.'); // dateFormat description
 		$f->columnWidth = 50; 
@@ -890,7 +903,7 @@ class FieldtypeComments extends FieldtypeMulti {
 		$f->addOption('pg', $this->_('PG: May contain rude gestures, provocatively dressed individuals, the lesser swear words, or mild violence.'));
 		$f->addOption('r', $this->_('R: May contain such things as harsh profanity, intense violence, nudity, or hard drug use.'));
 		$f->addOption('x', $this->_('X: May contain hardcore sexual imagery or extremely disturbing violence.'));
-		$f->attr('value', $field->useGravatar); 
+		$f->attr('value', $field->get('useGravatar')); 
 		$f->label = $this->_('Use Gravatar?');
 		$f->description = $this->_('This service provides an avatar image with each comment (unique to the email address). To enable, select the maximum gravatar rating. These are the same as movie ratings, where G is the most family friendly and X is not.');
 		$f->notes = $this->_('Rating descriptions provided by [Gravatar](https://en.gravatar.com/site/implement/images/).');
@@ -933,10 +946,11 @@ class FieldtypeComments extends FieldtypeMulti {
 		
 		$f = $this->wire('modules')->get('InputfieldMarkup'); 
 		$f->label = $this->_('CSS for front-end comments output'); 
+		$ftUrl = $this->wire('config')->urls('FieldtypeComments');
 		$f->value = 
 			"<p>Please copy and paste the following into the document <code>&lt;head&gt;</code> of your site:</p>" .
 			"<pre style='border-left: 4px solid #ccc; padding-left: 1em;'>&lt;link rel='stylesheet' type='text/css' href='&lt;?=\$config-&gt;urls-&gt;FieldtypeComments?&gt;comments.css' /&gt;</pre>" . 
-			"<p>Or if you prefer, copy the <a target='_blank' href='{$this->config->urls->FieldtypeComments}comments.css'>comments.css</a> file to your own location, " . 
+			"<p>Or if you prefer, copy the <a target='_blank' href='{$ftUrl}comments.css'>comments.css</a> file to your own location, " . 
 			"modify it as desired, and link to it in your document head as you do with your other css files.</p>";
 		$fieldset->add($f);
 		
@@ -946,7 +960,7 @@ class FieldtypeComments extends FieldtypeMulti {
 			"<p>If you are using threaded comments (i.e. reply depth > 0), please also copy and paste the following into the document <code>&lt;head&gt;</code> " .
 			"or before the closing <code>&lt;/body&gt;</code> tag. In either case, jQuery is required to have been loaded first.</p>" .
 			"<pre style='border-left: 4px solid #ccc; padding-left: 1em;'>&lt;script type='text/javascript' src='&lt;?=\$config-&gt;urls-&gt;FieldtypeComments?&gt;comments.min.js'&gt;&lt;/script&gt;</pre>" .
-			"<p>Like with the comments.css file, feel free to copy and link to the <a target='_blank' href='{$this->config->urls->FieldtypeComments}comments.js'>comments.js</a> file from your own " .
+			"<p>Like with the comments.css file, feel free to copy and link to the <a target='_blank' href='{$ftUrl}comments.js'>comments.js</a> file from your own " .
 			"location if you prefer it.</p>";
 		$fieldset->add($f); 
 		
@@ -980,7 +994,7 @@ class FieldtypeComments extends FieldtypeMulti {
 	 * @param string $selectorString Selector string with query
 	 * @return CommentArray
 	 * @throws WireException
-	 * @deprecated Use $field->type->find($field, $selectorString) instead.
+	 * @deprecated Use $field->type->find($selectorString) instead.
 	 *
 	 */
 	static public function findComments($field, $selectorString) {
@@ -990,47 +1004,163 @@ class FieldtypeComments extends FieldtypeMulti {
 	}
 
 	/**
-	 * Given a field and a selector, find all comments matching the selector (non-static version)
+	 * Given a field and a selector, find all comments matching the selector 
 	 *
-	 * Note that if you don't specify a limit=n, it will default to a limit of 10
-	 * If you don't specify a sort, it will default to sort=-created
+	 * - If you don’t specify a “limit=n”, it will default to a limit of 10.
+	 * - If you don’t specify a sort, it will default to “sort=-created”.
+	 * - Arguments may be optionally reversed (for backwards compatibility).
+	 * 
+	 * Unlike $pages->find(), pagination of comments is not automatically tied to 
+	 * $input->pageNum(). As a result, if you paginate, you should specify both 
+	 * “start=n” and “limit=n” in your selector:
+	 * 
+	 * ~~~~~~
+	 * $limit = 20;
+	 * $start = ($input->pageNum() - 1) * $limit; 
+	 * $comments = $field->type->find("text%=something, start=$start, limit=$limit"); 
+	 * ~~~~~~
+	 * 
+	 * Please also note that this function returns comments without taking anything 
+	 * about the page they live on into account. As a result, it can return comments 
+	 * from unpublished or non-viewable pages. If you need this, check the returned 
+	 * results:
+	 * 
+	 * ~~~~
+	 * $comments = $field->type->find('text%=something'); 
+	 * foreach($comments as $comment) {
+	 *   $p = $comment->getPage();
+	 *   if(!$p->viewable()) $comments->remove($comment); 
+	 * }
+	 * ~~~~
 	 *
-	 * @param Field|string Field object or name of field
-	 * @param string $selectorString Selector string with query
-	 * @return CommentArray
+	 * @param string|null $selectorString Selector string with query
+	 * @param CommentField|string Optional Field object. If omitted, then it will be determined automatically. 
+	 * @param array $options
+	 *  - `count` (bool): Return a total count rather than a CommentArray? (default=false)
+	 * @return CommentArray|int
 	 * @throws WireException
+	 * 
+	 * @todo add an 'include=' property for matching based on page status
+	 * @todo add support for page.native properties
 	 *
 	 */
-	public function find($field, $selectorString) {
-		if(is_string($field)) $field = $this->wire('fields')->get($field);
-		if(!$field instanceof Field) throw new WireException('Arg 1 to find() must be a field');
+	public function find($selectorString, $field = null, array $options = array()) {
+		$defaults = array(
+			'count' => false, 
+		);
+		$options = array_merge($defaults, $options);
+		if($field !== null) {
+			if($selectorString instanceof Field || (is_string($field) && Selectors::stringHasSelector($field))) {
+				// arguments are reversed
+				list($selectorString, $field) = array($field, $selectorString);
+			}
+			if(is_string($field)) $field = $this->wire('fields')->get($field);
+		}
+		if(!$field instanceof Field) $field = $this->getLastAccessField();
+		if(!$field instanceof Field) $field = $this->getCommentsFields(true);
+		if(!$field instanceof Field) throw new WireException("Unable to determine comments field"); 
+		
+		if($selectorString === null) $selectorString = '';
+		
+		$intColumns = array(
+			'id', 
+			'status', 
+			'created', 
+			'pages_id', 
+			'parent_id', 
+			'created_users_id', 
+			'upvotes', 
+			'downvotes', 
+			'stars'
+		);
+			
+		$sortColumns = array(
+			'sort', 
+			'status', 
+			'id', 
+			'pages_id', 
+			'created_users_id', 
+			'created', 
+			'upvotes', 
+			'downvotes', 
+			'stars'
+		);
 
 		$limit = 10;
 		$start = 0;
-		$desc = true;
-		$sort = 'created';
+		$sorts = array();
 		$database = $this->wire('database');
+		
+		$selectQuery = new DatabaseQuerySelect();
+		$countQuery = new DatabaseQuerySelect();
+		
+		$this->wire($selectQuery);
+		$this->wire($countQuery);
+		
 		$table = $database->escapeTable($field->getTable());
-		$sql =  "SELECT * FROM `$table` WHERE id>0 ";
-		$sqlCount = "SELECT COUNT(*) FROM `$table` WHERE id>0 ";
-		$selectors = $this->wire(new Selectors($selectorString));
+		
+		$selectQuery->select("$table.*")->from($table)->where("$table.id>0");
+		$countQuery->select('COUNT(*)')->from($table)->where("$table.id>0");
+	
+		/** @var Selectors $selectors */
+		$selectors = $selectorString instanceof Selectors ? $selectorString : $this->wire(new Selectors($selectorString));
+		$wheres = array();
+		$joins = array();
+		$leftJoins = array();
+		$binds = array();
+		$status = null;
+		$cnt = 0;
 
 		foreach($selectors as $selector) {
 
-			$f = $database->escapeCol($selector->field);
+			$cnt++;
+			$f = $selector->field;
+			if(is_array($selector->field)) throw new WireException("OR not supported for field in: $selector"); 
+			$f = $database->escapeCol($f);
 			$operator = $selector->operator;
 			$value = $selector->value;
-			$_sql = '';
 
-			if(!$database->isOperator($operator)) continue;
 			if(is_array($f)) $f = reset($f);
-			if(is_array($value)) $value = reset($value);
+			if(is_array($value)) {
+				$values = $value;
+				$value = reset($value);
+			} else {
+				$values = array($value);
+			}
 
+			if($f === 'status') {
+				if(!ctype_digit($value)) {
+					if($value === 'approved') $value = Comment::statusApproved;
+						else if($value === 'featured') $value = Comment::statusFeatured;
+						else if($value === 'pending') $value = Comment::statusPending;
+						else if($value === 'spam') $value = Comment::statusSpam;
+				}
+				$status = (int) $value;
+			}
+			
 			if($f == 'page') $f = 'pages_id';
 			if($f == 'user') $f = 'created_users_id';
+			if(strpos($f, 'page.') === 0) $f = 'page_' . substr($f, 6); 
 
-			if(in_array($f, array('id', 'status', 'created', 'pages_id', 'parent_id', 'created_users_id', 'upvotes', 'downvotes', 'stars'))) {
-				$_sql .= "AND $f$operator" . ((int) $value)  . " ";
+			if($f === 'stars' && !$value && ($operator === '=' || $operator === '!=')) {
+				if($operator === '=') {
+					$wheres[] = "($table.$f=0 OR $table.$f IS NULL)";
+				} else if($operator === '!=') {
+					$wheres[] = "($table.$f!=0 OR $table.$f IS NOT NULL)";
+				}
+
+			} else if(in_array($f, $intColumns)) {
+				if(!$database->isOperator($operator)) $operator = '=';
+				if(count($values) > 1 && ($operator == '=' || $operator == '!=')) {
+					$intValues = array();
+					foreach($values as $v) {
+						if(is_object($v)) $v = (string) $v;
+						$intValues[] = (int) $v;
+					}
+					$wheres[] = "$table.$f " . ($operator == '=' ? 'IN(' : 'NOT IN(') . implode(',', $intValues) . ')';
+				} else {
+					$wheres[] = "$table.$f$operator" . ((int) $value);
+				}
 
 			} else if($f == 'start') {
 				$start = (int) $value;
@@ -1041,28 +1171,131 @@ class FieldtypeComments extends FieldtypeMulti {
 			} else if($f == 'sort') {
 				$desc = substr($value, 0, 1) == '-';
 				$value = trim($value, '-');
-				if(in_array($value, array('sort', 'status', 'id', 'pages_id', 'created_users_id', 'created', 'upvotes', 'downvotes', 'stars'))) {
+				if(in_array($value, $sortColumns)) {
 					$sort = $database->escapeCol($value);
+					$sorts[] = "$table.$sort" . ($desc ? ' DESC' : ' ASC');
 				}
 
 			} else if($f == 'cite' || $f == 'email' || $f == 'ip') {
-				$value = $database->escapeStr($value);
-				$_sql .= "AND $f$operator'$value' ";
+				if(!$database->isOperator($operator)) $operator = '=';
+				if(count($values) > 1) {
+					$ors = array();
+					foreach($values as $v) {
+						$ors[] = "$table.$f$operator:cnt$cnt";
+						$binds["cnt$cnt"] = $v;
+						$cnt++;
+					}
+					$wheres[] = '(' . implode(' OR ', $ors) . ')';
+				} else {
+					$wheres[] = "$table.$f$operator:cnt$cnt";
+					$binds["cnt$cnt"] = $value;
+				}
+				
+			} else if($f == 'text' || $f == 'data') {
+				$f = 'data';
+				foreach(array($selectQuery, $countQuery) as $q) {
+					$fulltext = new DatabaseQuerySelectFulltext($q);
+					$this->wire($fulltext);
+					$fulltext->match($table, $f, $operator, $value);
+				}
+			} else if(strpos($f, 'page_') === 0) {
+				list($f, $fieldName) = explode('_', $f, 2); 
+				if($f) {} // ignore
+				if(strpos($fieldName, '.')) {
+					list($fieldName, $colName) = explode('.', $fieldName); 
+					$colName = $database->escapeCol($colName);
+				} else {
+					$colName = 'data';
+				}
+				
+				if($fieldName === 'parent_id' || $fieldName === 'templates_id') {
+					$ids = array();
+					foreach($values as $id) $ids[] = (int) $id;
+					$ids = implode(',', $ids);
+					$joinTable = "pages_$fieldName";
+					$joins[] = "pages AS $joinTable ON $joinTable.$fieldName IN($ids) AND $table.pages_id=$joinTable.id";
+					
+				} else {
+					/** @var Field $f */
+					$f = $this->wire('fields')->get($fieldName);
+					if(!$f) continue;
+					$fieldTable = $f->getTable();
+					if(!$database->isOperator($operator)) $operator = '=';
+					if(count($values) > 1) {
+						$ors = array();
+						foreach($values as $v) {
+							$ft = $fieldTable . $cnt;
+							$leftJoins[] = "$fieldTable AS $ft ON $ft.pages_id=$table.pages_id AND $ft.$colName$operator:cnt$cnt";
+							$binds["cnt$cnt"] = $v;
+							$ors[] = "$ft.$colName IS NOT NULL";
+							$cnt++;
+						}
+						$wheres[] = '(' . implode(' OR ', $ors) . ')';
+					} else {
+						$ft = $fieldTable . $cnt;
+						$joins[] = "$fieldTable AS $ft ON $ft.pages_id=$table.pages_id AND $ft.$colName$operator:cnt$cnt";
+						$binds["cnt$cnt"] = $value;
+					}
+				}
 			}
-
-			$sql .= $_sql;
-			$sqlCount .= $_sql;
+		}
+	
+		// if no status was specified and we’re on the front-end, match only approved comments
+		if($status === null && $this->wire('page')->template != 'admin') {
+			$wheres[] = "$table.status>=" . Comment::statusApproved;
+		}
+		
+		foreach($wheres as $where) {
+			$selectQuery->where($where);
+			$countQuery->where($where);
+		}
+		foreach($joins as $join) {
+			$selectQuery->join($join);
+			$countQuery->join($join);
+		}
+		foreach($leftJoins as $leftJoin) {
+			$selectQuery->leftjoin($leftJoin);
+			$countQuery->leftjoin($leftJoin);
+		}
+		
+		if(count($selectQuery->get('orderby')) && !empty($sorts)) {
+			$selectQuery->set('orderby', array());
+		}
+		
+		if(empty($sorts)) {
+			$sorts[] = "$table.created DESC";
 		}
 
-		$sql .= "ORDER BY $sort " . ($desc ? "DESC" : "ASC") . " ";
-		$sql .= "LIMIT $start, $limit";
+		// COUNT
+		$sql = $countQuery->getQuery();
+		$query = $database->prepare($sql);
+		foreach($binds as $key => $value) {
+			$query->bindValue(":$key", $value);
+		}
+		$countQuery->copyBindValuesTo($query); // populate from $countQuery to $query
+		$query->execute();
+		list($total) = $query->fetch(\PDO::FETCH_NUM);
+		$total = (int) $total;
+		$query->closeCursor();
+		if($options['count']) return $total;
 
+		// SELECT
+		$selectQuery->orderby(implode(',', $sorts));
+		$selectQuery->limit("$start,$limit"); 
+
+		/** @var CommentArray $comments */
 		$comments = $this->wire(new CommentArray());
 		$comments->setField($field);
 		$comments->setStart($start);
 		$comments->setLimit($limit);
+		$comments->data('selectors', $selectors); // only present on CommentArray from find()
 
+		$sql = $selectQuery->getQuery();
 		$query = $database->prepare($sql);
+		foreach($binds as $key => $value) {
+			$query->bindValue(":$key", $value); 
+		}
+		$selectQuery->copyBindValuesTo($query); // populate from $selectQuery to $query
 		$query->execute();
 		$commentPages = array();
 
@@ -1076,7 +1309,6 @@ class FieldtypeComments extends FieldtypeMulti {
 			$pageID = $row['pages_id'];
 			if(isset($commentPages[$pageID])) {
 				$page = $commentPages[$pageID];
-				$comment->setPage($commentPages[$pageID]); 
 			} else {
 				$page = $this->wire('pages')->get((int) $pageID);
 				$commentPages[$page->id] = $page; 
@@ -1087,20 +1319,50 @@ class FieldtypeComments extends FieldtypeMulti {
 			$comment->setIsLoaded(true);
 		}
 		$query->closeCursor();
-		$query = $database->prepare($sqlCount);
-		$query->execute();
-		list($total) = $query->fetch(\PDO::FETCH_NUM);
+		
 		$comments->resetTrackChanges();
 		$comments->setTotal($total);
 
 		return $comments; 
 	}
+	
+	/**
+	 * Given a field and a selector, return total quantity of comments matching the selector
+	 *
+	 * @param string|null $selectorString Selector string with query
+	 * @param Field|string Optional Field object. If omitted, then it will be determined automatically.
+	 * @return int
+	 * @throws WireException
+	 *
+	 */
+	public function count($selectorString, $field = null) {
+		return $this->find($selectorString, $field, array('count' => true)); 
+	}
+
+	/**
+	 * Return comments field(s)
+	 * 
+	 * @param bool $one Return only the first one found? (default=false)
+	 * @return array|Field|null
+	 * 
+	 */
+	public function getCommentsFields($one = false) {
+		$fields = array();
+		foreach($this->wire('fields') as $field) {
+			if($field->type instanceof FieldtypeComments) {
+				$fields[] = $field;
+				if($one) break;
+			}
+		}
+		if($one) return count($fields) ? $fields[0] : null;
+		return $fields;
+	}
 
 	/**
 	 * Given a comment code or subcode, return the associated comment ID or 0 if it doesn't exist
 	 * 
-	 * @param $page
-	 * @param $field
+	 * @param Page|int $page
+	 * @param Field|string $field
 	 * @param $code
 	 * @return Comment|null
 	 * 
@@ -1126,27 +1388,65 @@ class FieldtypeComments extends FieldtypeMulti {
 	/**
 	 * Get a comment by ID or NULL if not found
 	 * 
-	 * @param $page
-	 * @param $field
-	 * @param $id
+	 * @param Page|int|null $page Provide Page object or ID, or null to auto-detect Page
+	 * @param Field|string $field Field object or name
+	 * @param int $id Comment ID
 	 * @return Comment|null
 	 * 
 	 */
 	public function getCommentByID($page, $field, $id) {
-		if(!is_object($page)) $page = $this->wire('pages')->get((int) $page);
-		if(!$page->id) return null;
 		if(empty($id)) return null;
-		if(!is_object($field)) $field = $this->wire('fields')->get($this->wire('sanitizer')->fieldName($field));
+		if($page && !is_object($page)) {
+			$page = $this->wire('pages')->get((int) $page);
+			if(!$page->id) return null;
+		}
+		if(!is_object($field) && $field) {
+			$field = $this->wire('fields')->get($this->wire('sanitizer')->fieldName($field));
+		}
 		if(!$field || !$field->type instanceof FieldtypeComments) return null;
 		$table = $field->getTable();
-		$sql = "SELECT * FROM `$table` WHERE id=:id AND pages_id=:pageID";
+		$sql = "SELECT * FROM `$table` WHERE id=:id ";
+		if($page) $sql .= "AND pages_id=:pageID";
 		$query = $this->wire('database')->prepare($sql);
 		$query->bindValue(':id', (int) $id, \PDO::PARAM_INT); 
-		$query->bindValue(':pageID', $page->id, \PDO::PARAM_INT);
+		if($page) $query->bindValue(':pageID', $page->id, \PDO::PARAM_INT);
 		if(!$query->execute()) return null;
 		if(!$query->rowCount()) return null;
 		$data = $query->fetch(\PDO::FETCH_ASSOC);
+		if(!$page) {
+			$page = $this->wire('pages')->get((int) $data['pages_id']); 
+		}	
 		return $this->makeComment($page, $field, $data); 
+	}
+
+	/**
+	 * Get parent comments for given Comment
+	 * 
+	 * @param Page $page
+	 * @param Field $field
+	 * @param Comment $comment
+	 * @return CommentArray
+	 * @since 3.0.153
+	 * 
+	 */
+	public function getCommentParents(Page $page, Field $field, Comment $comment) {
+		
+		/** @var CommentArray $parents */
+		$parents = $this->wire(new CommentArray());
+		$parents->setPage($page);
+		$parents->setField($field);
+		
+		if(!$comment->parent_id) return $parents;
+		
+		$parent = $comment;
+		
+		do {
+			$parent = $this->getCommentByID($page, $field, $parent->parent_id); 
+			if(!$parent || !$parent->id || $parents->has($parent)) break;
+			$parents->add($parent); 
+		} while($parent->parent_id > 0);
+	
+		return $parents;
 	}
 
 	/**
@@ -1225,6 +1525,118 @@ class FieldtypeComments extends FieldtypeMulti {
 	}
 
 	/**
+	 * Add new comment
+	 * 
+	 * Requires a new Comment object with no id, that has all its required field populated and validated
+	 * and is ready to add. Note that the `sort` property is assigned automatically if not specified in Comment.
+	 * 
+	 * The primary reason to use this method is if you want to add a comment without loading all the other
+	 * comments on a given Page. 
+	 * 
+	 * Note: if you are hooking this method, comments can also be added by the savePageField method
+	 * 
+	 * @param Page $page Page where comments field exists
+	 * @param Field $field Comments field
+	 * @param Comment $comment New comment to add
+	 * @param bool $send Send comment for automatic approval filtering and email notifications?
+	 *  - `true` if comment was just submitted now from user input and filtering should apply, notifications sent, etc.
+	 *  - `false` if you are importing comments and NO filtering should be applied, NO notifications sent, etc.
+	 * @return bool Returns true on success, false on fail
+	 * @throws WireException if given a Comment object that is not ready to add
+	 * @since 3.0.153
+	 * 
+	 */
+	public function addComment(Page $page, Field $field, Comment $comment, $send) {
+		
+		if($comment->id) {
+			throw new WireException("Comment already has an ID (not a new comment)");
+		} else if($comment->getPage() && $comment->getPage()->id != $page->id) {
+			throw new WireException("Comment is already assigned to a different Page"); 
+		} else if($comment->getField() && $comment->getField()->id != $field->id) {
+			throw new WireException("Comment is already assigned to a different Field"); 
+		}
+
+		/** @var WireDatabasePDO $database */
+		$database = $this->wire('database');
+		$table = $database->escapeTable($field->table);
+		$sets = array('pages_id=:pages_id');
+		$binds = array('pages_id' => (int) $page->id);
+		$nextSort = $this->getMaxSort($page, $field) + 1;
+		$comment->quiet(!$send); 
+
+		if(!$comment->sort) $comment->sort = $nextSort;
+		
+		$this->commentAddReady($page, $field, $comment); 
+	
+		/** @var CommentArray $commentArray */
+		$commentArray = $this->wire(new CommentArray());
+		$commentArray->setPage($page);
+		$commentArray->setField($field); 
+		$commentArray->add($comment);
+
+		// convert CommentArray to sleep value array
+		$value = $this->sleepValue($page, $field, $commentArray);
+		if(!count($value)) return false;
+		
+		// use just first item, since only 1 comment
+		$value = $value[0]; 
+		$value['sort'] = $nextSort;
+	
+		// determine all values to set
+		foreach(array_keys($value) as $key) {
+			if($key == 'id') continue;
+			
+			$v = $value[$key];
+			$col = $database->escapeCol($key);
+			
+			if($v === null && ($key === 'code' || $key === 'subcode')) {
+				// 'code' and 'subcode' allow null
+				$sets[] = "$col=NULL";
+			} else {
+				$sets[] = "$col=:$col";
+				$binds[$col] = $v;
+			}
+		}
+		
+		$tries = 0;
+		$maxTries = 10;
+
+		do {
+			try {
+				$error = '';
+				$sql = "INSERT INTO `$table` SET " . implode(', ', $sets);
+				$query = $database->prepare($sql);
+				foreach($binds as $k => $v) {
+					$query->bindValue(":$k", $v);
+				}
+				$result = $query->execute();
+				if($result) $comment->id = $database->lastInsertId();
+			} catch(\Exception $e) {
+				$result = false;
+				$error = $e->getMessage();
+				if($e->getCode() == 23000) {
+					// colliding index, maybe race condition, see if increasing sort solves it
+					if($binds['sort'] == $nextSort) $nextSort++;
+					$binds['sort'] = $nextSort;
+				}
+			}
+		} while(!$result && ++$tries < $maxTries);
+		
+		if($result && $comment->id) {
+			// the $page->data() call used so load not triggered, only returns comments if already loaded
+			$comments = $page->data($field->name);
+			// add to loaded CommentArray for page, but only if it is already loaded in memory
+			if($comments && $comments instanceof CommentArray) $comments->add($comment); 
+			$this->commentAdded($page, $field, $comment);
+		} else {
+			$error = "Error adding new comment on page $page field $field->name for $comment->email: $error";
+			$this->error($error, Notice::superuser | Notice::log);
+		}
+		
+		return $result;
+	}
+
+	/**
 	 * Delete a given comment
 	 *
 	 * @param Page $page
@@ -1236,7 +1648,7 @@ class FieldtypeComments extends FieldtypeMulti {
 	 */
 	public function deleteComment(Page $page, Field $field, Comment $comment, $notes = '') {
 		
-		if($field->depth > 0) {
+		if($field->get('depth') > 0) {
 			foreach($comment->children() as $child) {
 				$this->deleteComment($page, $field, $child); 
 			}
@@ -1262,6 +1674,99 @@ class FieldtypeComments extends FieldtypeMulti {
 		}
 		
 		return $result;
+	}
+
+	/**
+	 * Get max 'sort' value for comments field or -1 if no rows
+	 * 
+	 * @param Page $page
+	 * @param Field $field
+	 * @return int
+	 * @since 3.0.153
+	 * 
+	 */
+	protected function getMaxSort(Page $page, Field $field) {
+		$database = $this->wire('database');
+		$table = $database->escapeTable($field->getTable());
+		$sql = "SELECT MAX(sort) FROM `$table` WHERE pages_id=:pages_id";
+		$query = $database->prepare($sql);
+		$query->bindValue(':pages_id', $page->id, \PDO::PARAM_INT);
+		$query->execute();
+		$value = $query->fetchColumn();
+		$value = $value === null ? -1 : (int) $value;
+		$query->closeCursor();
+		return $value; 
+	}
+
+	/**
+	 * Get number of comments for Page, optionally limited by specific $options
+	 * 
+	 * @param Page $page
+	 * @param Field $field
+	 * @param array $options 
+	 *  - `status` (int): Specify Comment::status* constant to include only this status
+	 *  - `minStatus` (int): Specify Comment::status* constant to include only comments with at least this status
+	 *  - `maxStatus` (int): Specify Comment::status* constant or include only comments up to this status
+	 *  - `parent` (int|Comment): Specify parent comment ID, 0 for root-only, or omit for no parent limitation
+	 *  - `minCreated` (int): Minimum created unix timestamp
+	 *  - `maxCreated` (int): Maximum created unix timestamp
+	 *  - `stars` (int): Number of stars to match (1-5)
+	 *  - `minStars` (int): Minimum number of stars to match (1-5)
+	 *  - `maxStars` (int): Maximum number of stars to match (1-5)
+	 * @return int
+	 * @since 3.0.153
+	 * 
+	 */
+	public function getNumComments(Page $page, Field $field, array $options = array()) {
+		
+		$defaults = array(
+			'status' => null,
+			'minStatus' => null, 
+			'maxStatus' => null, 
+			'parent' => null,
+			'minCreated' => null,
+			'maxCreated' => null,
+			'stars' => null,
+			'minStars' => null,
+			'maxStars' => null,
+		);
+		
+		$options = array_merge($defaults, $options);
+		$database = $this->wire('database');
+		$table = $database->escapeTable($field->getTable());
+		$sql = "SELECT COUNT(*) FROM `$table` WHERE pages_id=:page "; 
+		$binds = array(':page' => $page->id); 
+		
+		$cols = array(
+			'status' => 'status=:status',
+			'minStatus' => 'status>=:minStatus', 
+			'maxStatus' => 'status<=:maxStatus', 
+			'parent' => 'parent_id=:parent',
+			'minCreated' => 'created>=:minCreated',
+			'maxCreated' => 'created<=:maxCreated',
+			'stars' => 'stars=:stars',
+			'minStars' => 'stars>=:minStars',
+			'maxStars' => 'stars<=:maxStars',
+		);
+		
+		foreach($cols as $name => $stmt) {
+			$value = $options[$name];
+			if($value === null) continue;
+			if($name === 'parent' && $value instanceof Comment) $value = $value->id;
+			$sql .= "AND $stmt ";
+			$binds[":$name"] = (int) $value;
+		}
+		
+		$query = $database->prepare($sql);
+		foreach($binds as $key => $value) {
+			$query->bindValue($key, $value, \PDO::PARAM_INT);
+		}
+		
+		$query->execute();
+		$numComments = (int) $query->fetchColumn();
+		$query->closeCursor();
+		
+		return $numComments;
 	}
 
 	/**
@@ -1293,7 +1798,7 @@ class FieldtypeComments extends FieldtypeMulti {
 		
 		$this->wire('log')->message("Approved comment $comment->id - $notes"); 
 		
-		if($field->useNotify) {
+		if($field->get('useNotify')) {
 			
 			$emails = array();
 			foreach($page->get($field->name) as $c) {
@@ -1345,6 +1850,32 @@ class FieldtypeComments extends FieldtypeMulti {
 	}
 
 	/**
+	 * Hook called when new comment about to be added to DB
+	 * 
+	 * #pw-hooker
+	 * 
+	 * @param Page $page
+	 * @param Field $field
+	 * @param Comment $comment
+	 * 
+	 */
+	public function ___commentAddReady(Page $page, Field $field, Comment $comment) {
+	}
+
+	/**
+	 * Hook called when new comment has successfully been added to DB
+	 *
+	 * #pw-hooker
+	 *
+	 * @param Page $page
+	 * @param Field $field
+	 * @param Comment $comment
+	 *
+	 */
+	public function ___commentAdded(Page $page, Field $field, Comment $comment) {
+	}
+
+	/**
 	 * Add a vote to the current comment from the current user/IP
 	 * 
 	 * @param Page $page
@@ -1359,8 +1890,8 @@ class FieldtypeComments extends FieldtypeMulti {
 		$database = $this->wire('database'); 
 		$table = $database->escapeTable($field->getTable()) . '_votes';
 		
-		if(!$field->useVotes) return false;
-		if(!$up && $field->useVotes != self::useVotesAll) return false; // downvotes not allowed
+		if(!$field->get('useVotes')) return false;
+		if(!$up && $field->get('useVotes') != self::useVotesAll) return false; // downvotes not allowed
 		
 		$sql = "INSERT INTO `$table` SET comment_id=:comment_id, vote=:vote, ip=:ip, user_id=:user_id";
 		$query = $database->prepare($sql);
@@ -1476,7 +2007,7 @@ class FieldtypeComments extends FieldtypeMulti {
 			$result = false;
 			$this->error($e->getMessage());
 		}
-		if($result) try {
+		if($result !== false) try {
 			$database->exec("DROP TABLE `{$table}_votes`"); // QA
 		} catch(\Exception $e) {
 			// ok to ignore, as table may not exist
@@ -1612,6 +2143,8 @@ class FieldtypeComments extends FieldtypeMulti {
 		$updatePropertyCounts = array();
 		$skipUpdateProperties = array('id', 'created_user', 'created_users_id'); 
 		
+		if(!$comments) return null;
+		
 		foreach($comments as $comment) {
 			if($comment->status == Comment::statusSpam) continue; 
 			$key = $this->getCommentExportKey($comment); 
@@ -1706,6 +2239,6 @@ class FieldtypeComments extends FieldtypeMulti {
 		$options['test'] = true;
 		return $options;
 	}
-
+	
 }
 

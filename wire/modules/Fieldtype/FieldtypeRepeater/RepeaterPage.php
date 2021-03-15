@@ -3,7 +3,7 @@
 /**
  * RepeaterPage represents an individual repeater page item
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
  *
  */
@@ -12,13 +12,17 @@ class RepeaterPage extends Page {
 
 	/**
 	 * Page instance that has this repeater item on it
+	 * 
+	 * @var Page|null
 	 *
 	 */
 	protected $forPage = null;		
 
 	/**
 	 * Field instance that contains this repeater item
-	 *
+	 * 
+	 * @var Field|null
+	 * 
 	 */
 	protected $forField = null;
 	
@@ -95,24 +99,86 @@ class RepeaterPage extends Page {
 
 	/**
 	 * Return the field that this repeater item belongs to
+	 * 
+	 * Returns null only if $forField has not been set and cannot be determined from any other
+	 * properties of this page. Meaning null return value is not likely.
 	 *
-	 * @return Field
+	 * @return Field|null 
 	 *
 	 */
 	public function getForField() {
-		if(!is_null($this->forField)) return $this->forField;
+		if($this->forField !== null) return $this->forField;
 
+		// auto-detect forField from its location
 		$grandparent = $this->parent()->parent();
 		$grandparentName = $grandparent->name;
 		$prefix = FieldtypeRepeater::fieldPageNamePrefix;  // for-field-
+		$forField = null;
+		$fields = $this->wire('fields'); /** @var Fields $fields */
 
 		if(strpos($grandparentName, $prefix) === 0) {
 			// determine field from grandparent name in format: for-field-1234
 			$forID = (int) substr($grandparentName, strlen($prefix));
-			$this->forField = $this->wire('fields')->get($forID); 
+			$forField = $fields->get($forID); 
+		} else {
+			// page must exist somewhere outside the expected location, so use template
+			// name as a secondary way to identify what the field is
+			$template = $this->template;
+			if($template && strpos($template->name, FieldtypeRepeater::templateNamePrefix) === 0) {
+				list(,$fieldName) = explode(FieldtypeRepeater::templateNamePrefix, $template->name, 2);
+				$forField = $fields->get($fieldName);
+			}
 		}
+		
+		if($forField) $this->forField = $forField;
+		
+		return $forField;
+	}
 
-		return $this->forField;
+	/**
+	 * For nested repeaters, returns the root level forPage and forField in an array
+	 *
+	 * @param string $get Specify 'page' or 'field' or omit for array of both
+	 * @return array|Page|Field
+	 * @since 3.0.132
+	 *
+	 */
+	protected function getForRoot($get = '') {
+		$forPage = $this->getForPage();
+		$forField = $this->getForField();
+		$n = 0;
+		while($forPage instanceof RepeaterPage && ++$n < 20) {
+			$forField = $forPage->getForField();
+			$forPage = $forPage->getForPage();
+		}
+		if($forPage instanceof RepeaterPage) {
+			$forPage = new NullPage();
+		}
+		if($get === 'page') return $forPage;
+		if($get === 'field') return $forField;
+		return array('page' => $forPage, 'field' => $forField);
+	}
+
+	/**
+	 * For nested repeaters, return the root-level field that this repeater item belongs to
+	 *
+	 * @return Field
+	 * @since 3.0.132
+	 *
+	 */
+	public function getForFieldRoot() {
+		return $this->getForRoot('field');
+	}
+
+	/**
+	 * For nested repeaters, return the root-level non-repeater page that this repeater item belongs to
+	 *
+	 * @return Page
+	 * @since 3.0.132
+	 *
+	 */
+	public function getForPageRoot() {
+		return $this->getForRoot('page');
 	}
 
 	/**
@@ -157,6 +223,7 @@ class RepeaterPage extends Page {
 		$name = ltrim($name, '-');
 		if($depth > 0) $name = str_repeat('-', $depth) . $name;
 		if($name !== $_name) $this->name = $name;
+		$this->depth = $depth;
 	}
 
 	/**
@@ -181,5 +248,28 @@ class RepeaterPage extends Page {
 	public function isReady() {
 		return $this->isUnpublished() && $this->isHidden();
 	}
+
+	/**
+	 * Track a change to a property in this object
+	 *
+	 * The change will only be recorded if change tracking is enabled for this object instance.
+	 *
+	 * #pw-group-changes
+	 *
+	 * @param string $what Name of property that changed
+	 * @param mixed $old Previous value before change
+	 * @param mixed $new New value
+	 * @return $this
+	 *
+	public function trackChange($what, $old = null, $new = null) {
+		parent::trackChange($what, $old, $new);
+		if($this->trackChanges()) {
+			$forPage = $this->getForPage();
+			$forField = $this->getForField();
+			if($forPage->id && $forField) $forPage->trackChange($forField->name);
+		}
+		return $this;
+	}
+	 */
 }
 

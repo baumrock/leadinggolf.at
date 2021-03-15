@@ -9,7 +9,7 @@
  * /wire/core/Fieldtype.php
  * /wire/core/FieldtypeMulti.php
  * 
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2018 by Ryan Cramer
  * https://processwire.com
  *
  */
@@ -19,7 +19,7 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 	public static function getModuleInfo() {
 		return array(
 			'title' => 'Page Reference',
-			'version' => 104,
+			'version' => 105,
 			'summary' => 'Field that stores one or more references to ProcessWire pages',
 			'permanent' => true, 
 			);
@@ -43,7 +43,7 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 		'created',
 		'modified',
 		'published',
-		);
+	);
 
 
 	/**	
@@ -130,6 +130,8 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 	 *
 	 */
 	public function ___wakeupValue(Page $page, Field $field, $value) {
+		
+		if($field->hasContext($page)) $field = $field->getContext($page);
 
 		$template = null;
 		$template_ids = self::getTemplateIDs($field);
@@ -240,10 +242,12 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 	 * @param Page $page
 	 * @param Field $field
 	 * @param string|int|array|object $value
-	 * @return string|int
+	 * @return array
 	 *
 	 */
 	public function ___sleepValue(Page $page, Field $field, $value) {
+		
+		if($field->hasContext($page)) $field = $field->getContext($page);
 		
 		$sleepValue = array();
 		
@@ -378,15 +382,28 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 	 *
 	 */
 	public function ___formatValue(Page $page, Field $field, $value) {
-		if($field->get('allowUnpub')) return $value; 
 
 		// remove unpublished pages for front-end formatted output
 		if($value instanceof Page) {
-			if($value->hasStatus(Page::statusUnpublished)) $value = $this->getBlankValue($page, $field); 
-
-		} else if($value instanceof PageArray) {
+			if($value->hasStatus(Page::statusUnpublished)) {
+				$value = $this->getBlankValue($page, $field);
+			}
+		} else if($value instanceof PageArray && $field->get('allowUnpub')) {
+			// unpublished pages are allowed, so if any are present, create new
+			// formatted value that excludes the unpublished pages 
+			$hasUnpublished = false;
 			foreach($value as $item) {
-				if($item->hasStatus(Page::statusUnpublished)) $value->remove($item); 
+				$hasUnpublished = $item->hasStatus(Page::statusUnpublished);
+				if($hasUnpublished) break;
+			}
+			if($hasUnpublished) {
+				$items = $this->getBlankValue($page, $field); 
+				$items->setTrackChanges(false);
+				foreach($value as $item) {
+					if(!$item->hasStatus(Page::statusUnpublished)) $items->add($item); 	
+				}
+				$items->resetTrackChanges(true);
+				$value = $items;
 			}
 		}
 
@@ -519,7 +536,7 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 				$template = $this->wire('templates')->get((int) $field->get('template_id'));
 				$parent = $this->wire('pages')->get((int) $parent_id); 
 				if($template && $parent->id) {
-					$result = $this->wire('pages')->newPage(array('template' => $template));
+					$result = $this->wire('pages')->newPage($template);
 					$result->parent = $parent; 
 					$result->title = $value; 
 					$result->name = $this->wire('sanitizer')->pageNameUTF8($value); 
@@ -717,7 +734,6 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 	 * @param string $operator The comparison operator
 	 * @param mixed $value The value to find
 	 * @return DatabaseQuery $query
-	 * @throws WireException if given invalid or unrecognized arguments
 	 *
 	 */
 	protected function getLoadQueryWhere(Field $field, DatabaseQuerySelect $query, $col, $operator, $value) {
@@ -728,12 +744,12 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 	/**
 	 * Update a DatabaseQuerySelect object to match a Page
 	 *
-	 * @param DatabaseQuerySelect $query
+	 * @param DatabaseQuerySelect|PageFinderDatabaseQuerySelect $query
 	 * @param string $table
 	 * @param string $subfield
 	 * @param string $operator
 	 * @param string $value
-	 * @return DatabaseQuerySelect
+	 * @return DatabaseQuery
 	 * @throws WireException
 	 *
 	 */
@@ -746,7 +762,7 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 			'path',
 			'url',
 			'sort',
-			);
+		);
 
 		$database = $this->wire('database');
 		
@@ -801,20 +817,29 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 				}
 			}
 
-			$value = $database->escapeStr($value); 
 			$subfield = $database->escapeCol($subfield);
 
 			if($operator == '!=') {
 				$t = $database->escapeTable($query->field->getTable());
-				$where = 
-					"SELECT COUNT(*) FROM $t " . 
-					"WHERE $t.pages_id=pages.id " . 
-					"AND " . ($idstr ? "$t.$subfield IN($value)" : "$t.$subfield='$value'");
+				$where = "SELECT COUNT(*) FROM $t WHERE $t.pages_id=pages.id ";
+				if($idstr) {
+					$value = explode(',', $value); 
+					$value = array_map('intval', $value); 
+					$value = implode(',', $value);
+					$where .= "AND $t.$subfield IN($value)"; 
+				} else {
+					$bindKey = $query->bindValueGetKey($value);
+					$where .= "AND $t.$subfield=$bindKey";
+				}
 				$query->where("($where)=0");
 			} else if($operator == '=' && $idstr) {
+				$value = explode(',', $value);
+				$value = array_map('intval', $value);
+				$value = implode(',', $value);
 				$query->where("($table.{$subfield} IN($value))"); 
 			} else {
-				$query->where("($table.{$subfield}{$operator}'$value')"); 
+				$bindKey = $query->bindValueGetKey($value);
+				$query->where("($table.{$subfield}{$operator}$bindKey)"); 
 			}
 
 		} else if($this->getMatchQueryNative($query, $table, $subfield, $operator, $value)) {
@@ -882,9 +907,8 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 		$table = $database->escapeTable($table);
 		$table2 = "_fieldtypepage" . (++$n);
 		$subfield = $database->escapeCol($subfield);
-
-		$value = $database->escapeStr($value); 
-		$query->join("pages AS $table2 ON $table2.$subfield$operator'$value'"); 
+		$bindKey = $query->bindValueGetKey($value); 
+		$query->join("pages AS $table2 ON $table2.$subfield$operator$bindKey"); 
 		$query->where("($table.data=$table2.id)"); 
 
 		return true; 
@@ -1367,8 +1391,6 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 	/**
 	 * Return pages referencing the given $page, optionally indexed by field name
 	 * 
-	 * Not currently applicable, for future use. 
-	 *
 	 * The default behavior when no arguments are provided (except $page) is to simply return a PageArray of all pages
 	 * referencing the given one (excluding hidden, unpublished, trash, no-access, etc.). Specify "include=all"
 	 * as your $selector if you want to include all pages without filtering. If the quantity may be large,
@@ -1377,26 +1399,37 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 	 *
 	 * @param Page $page Page to get references for
 	 * @param string|bool $selector Optionally filter/modify returned result, i.e. "limit=10, include=all", etc.
-	 * 	Or specify boolean TRUE to get a count. 
+	 *  Or boolean TRUE as shortcut for "include=all". 
 	 * @param bool|Field|null $field Optionally specify Field to limit results to (default includes all fields of this type),
 	 * 	Or boolean TRUE to return array indexed by field name.
+	 * @param bool $getCount Specify true to get a count (int) rather than a PageArray (default=false)
 	 * @return PageArray|array|int Returns one of the following, according to the provided arguments:
 	 * 	- returns PageArray as default behavior, including when given a $selector string and/or Field object.
 	 * 	- returns array of PageArray objects if $field argument is TRUE ($selector may be populated string or blank string).
 	 *  - returns int if the count option (boolean true) specified for $selector.
 	 *
 	 */
-	private function findReferences(Page $page, $selector = '', $field = false) {
+	public function findReferences(Page $page, $selector = '', $field = false, $getCount = false) {
 
+		/** @var Pages $pages */
+		$pages = $this->wire('pages');
+		
 		// modifier option defaults
-		$getCount = false;
 		$byField = false;
+		$includeAll = $selector === true || $selector === "include=all";
+		$findLimit = 200;
 		$fieldName = '';
 
-		// determine which modifier options are used
+		// determine whether to use include=all
 		if($selector === true) {
-			$getCount = true;
-			$selector = '';
+			$selector = "include=all";
+		} else if(strlen($selector) && !$includeAll && strpos($selector, "include=all") !== false) {
+			foreach(new Selectors($selector) as $s) {
+				if($s->field() === 'include' && $s->value() === 'all') {
+					$includeAll = true;
+					break;
+				}
+			}
 		}
 
 		if(is_bool($field) || is_null($field)) {
@@ -1411,48 +1444,73 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 		}
 
 		// results
-		$fieldNames = array();
-		$fieldCounts = array();
+		$fieldNames = array(); // field names that point to $page, array of [ field_id => field_name ]
+		$fieldCounts = array(); // counts indexed by field name (if count mode)
 		$total = 0;
-
+	
+		// first determine which fields have references to $page
 		foreach($this->wire('fields') as $field) {
+
 			if($fieldName && $field->name != $fieldName) continue;
 			if(!$field->type instanceof FieldtypePage) continue;
+
 			$table = $field->getTable();
 			$sql = "SELECT COUNT(*) FROM `$table` WHERE data=:id";
 			$query = $this->wire('database')->prepare($sql);
 			$query->bindValue(':id', $page->id, \PDO::PARAM_INT);
 			$query->execute();
+
 			$cnt = (int) $query->fetchColumn();
-			if($cnt) {
+			if($cnt > 0) {
 				$fieldNames[$field->id] = $field->name;
 				$fieldCounts[$field->name] = $cnt;
 				$total += $cnt;
 			}
+
 			$query->closeCursor();
 		}
 
-		// return count or array of counts
-		if($getCount) return $byField ? $fieldCounts : $total;
+		// if they just asked for the count, then we have all that we need to finish now
+		if($getCount && $includeAll) {
+			// return count or array of counts
+			return $byField ? $fieldCounts : $total;
+		}
 
-		// no references found and PageArray requested, return blank PageArray
-		if(!$total) return $this->wire('pages')->newPageArray();
-
+		// if there was nothing found, finish early
+		if(!$total) {
+			// no references found 
+			if($getCount) return $total;
+			return $byField ? array() : $pages->newPageArray();
+		}
+	
+		// perform another find() to filter results, and return requested result type
 		if($byField) {
 			// return array of PageArrays indexed by fieldName
 			$result = array();
 			foreach($fieldNames as $fieldName) {
-				$selector = "$fieldName=$page->id, $selector";
-				$items = $this->wire('pages')->find(rtrim($selector, ", "));
-				if($items->count()) {
-					$result[$fieldName] = $items;
+				$s = rtrim("$fieldName=$page->id, $selector", ', ');
+				if($getCount) {
+					$cnt = $pages->count($s);
+					if($cnt) $result[$fieldName] = $cnt;
+				} else {
+					if($total > $findLimit) {
+						$items = $pages->findMany($s);
+					} else {
+						$items = $pages->find($s);
+					}
+					if($items->count()) $result[$fieldName] = $items;
 				}
 			}
-
 		} else {
 			// return PageArray of all references
-			$selector = implode('|', $fieldNames) . "=$page->id, $selector";
-			$result = $this->wire('pages')->find(rtrim($selector, ", "));
+			$selector = rtrim(implode('|', $fieldNames) . "=$page->id, $selector", ', ');
+			if($getCount) {
+				$result = $pages->count($selector);
+			} else if($total > $findLimit) {
+				$result = $pages->findMany($selector);
+			} else {
+				$result = $pages->find($selector);
+			}
 		}
 
 		return $result;
@@ -1468,7 +1526,6 @@ class FieldtypePage extends FieldtypeMulti implements Module, ConfigurableModule
 	 * @param Field|array $field Field object or array with all possible template IDs
 	 * @param bool $getString Specify true to return a 1|2|3 style string rather than an array
 	 * @return array|string
-	 * @throws WireException
 	 *
 	 */
 	static public function getTemplateIDs($field, $getString = false) {

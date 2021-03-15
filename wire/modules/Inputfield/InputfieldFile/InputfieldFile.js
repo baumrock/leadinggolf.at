@@ -14,8 +14,13 @@ $(document).ready(function() {
 		// enable double-click to delete all
 		var $input = $(this).find('input'); 
 		var $items = $(this).parents('.InputfieldFileList').find('.InputfieldFileDelete input');
-		if($input.is(":checked")) $items.removeAttr('checked').change();
-			else $items.attr('checked', 'checked').change();
+		if($input.is(":checked")) {
+			// $items.removeAttr('checked').change(); // JQM
+			$items.prop('checked', false).change(); 
+		} else {
+			// $items.attr('checked', 'checked').change(); // JQM
+			$items.prop('checked', true).change(); 
+		}
 		return false; 
 	}); 
 
@@ -219,7 +224,7 @@ $(document).ready(function() {
 			var dropArea = $this.get(0);
 			var $fileList = $this.find(".InputfieldFileList"); 
 
-			if($fileList.size() < 1) {
+			if($fileList.length < 1) {
 				$fileList = $("<ul class='InputfieldFileList InputfieldFileListBlank'></ul>");
 				$this.prepend($fileList); 
 				$this.parent('.Inputfield').addClass('InputfieldFileEmpty'); 
@@ -293,7 +298,7 @@ $(document).ready(function() {
 
 							if(r.replace) {
 								var $child = $this.find('.InputfieldFileList').children('li:eq(0)');
-								if($child.size() > 0) $child.slideUp('fast', function() { $child.remove(); });
+								if($child.length > 0) $child.slideUp('fast', function() { $child.remove(); });
 							}
                            
 							// ie10 file field stays populated, this fixes that
@@ -338,7 +343,15 @@ $(document).ready(function() {
 							}
 						}
 						
-					}
+						setTimeout(function() {
+							var $inputfields = $markup.find('.Inputfield');
+							if($inputfields.length) {
+								InputfieldsInit($markup.find('.Inputfields'));
+								$inputfields.trigger('reloaded', ['InputfieldFileUpload']);
+							}
+						}, 500); 
+						
+					} // for
 
 					$progressItem.remove();
 					
@@ -388,6 +401,8 @@ $(document).ready(function() {
 						'<p class="InputfieldFileInfo ui-widget ui-widget-header InputfieldItemHeader ui-state-error">&nbsp; ' + filename  + ' ' + 
 						'<span class="InputfieldFileStats"> &bull; ' + message + '</span></p></li>';
 				}
+				
+				var errorMsg = '';
 
 				if(typeof files !== "undefined") {
 					for(var i=0, l=files.length; i<l; i++) {
@@ -395,12 +410,26 @@ $(document).ready(function() {
 						var extension = files[i].name.split('.').pop().toLowerCase();
 
 						if(extensions.indexOf(extension) == -1) {
-							$fileList.append(errorItem(files[i].name, extension + ' is a invalid file extension, please use one of:  ' + extensions)); 
+							if(typeof ProcessWire.config.InputfieldFile.labels['bad-ext'] != "undefined") {
+								errorMsg = ProcessWire.config.InputfieldFile.labels['bad-ext'];
+								errorMsg = errorMsg.replace('EXTENSIONS', extensions); 
+							} else {
+								errorMsg = extension + ' is a invalid file extension, please use one of: ' + extensions;
+							}
+							$fileList.append(errorItem(files[i].name, errorMsg)); 
 
 						} else if(files[i].size > maxFilesize && maxFilesize > 2000000) {
 							// I do this test only if maxFilesize is at least 2M (php default). 
 							// There might (not sure though) be some issues to get that value so don't want to overvalidate here -apeisa
-							$fileList.append(errorItem(files[i].name, 'Filesize ' + parseInt(files[i].size / 1024, 10) +' kb is too big. Maximum allowed is ' + parseInt(maxFilesize / 1024, 10) + ' kb')); 
+							var maxKB = parseInt(maxFilesize / 1024, 10);
+							if(typeof ProcessWire.config.InputfieldFile.labels['too-big'] != "undefined") {
+								errorMsg = ProcessWire.config.InputfieldFile.labels['too-big']; 
+								errorMsg = errorMsg.replace('MAX_KB', maxKB); 
+							} else {
+								var fileSize = parseInt(files[i].size / 1024, 10);
+								errorMsg = 'Filesize ' + fileSize +' kb is too big. Maximum allowed is ' + maxKB + ' kb';
+							}
+							$fileList.append(errorItem(files[i].name, errorMsg)); 
 
 						} else {
 							uploadFile(files[i]);

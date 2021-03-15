@@ -5,7 +5,7 @@
  *
  * Special PageArray for use by repeaters that includes a getNewItem() method
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2018 by Ryan Cramer
  * https://processwire.com
  *
  */
@@ -31,6 +31,7 @@ class RepeaterPageArray extends PageArray {
 	public function __construct(Page $parent, Field $field) {
 		$this->setParent($parent);
 		$this->setField($field); 
+		parent::__construct();
 	}
 
 	public function setParent(Page $parent) { $this->parent = $parent; }
@@ -60,7 +61,8 @@ class RepeaterPageArray extends PageArray {
 	 *
 	 */
 	public function getNewItem() {
-
+		/** @var FieldtypeRepeater $fieldtype */
+		$fieldtype = $this->field->type;
 		$page = null;
 		$of = $this->parent->of(false); 
 
@@ -74,7 +76,7 @@ class RepeaterPageArray extends PageArray {
 
 		if(is_null($page)) { 
 			// no ready item available, get a new one
-			$page = $this->field->type->getBlankRepeaterPage($this->parent, $this->field); 
+			$page = $fieldtype->getBlankRepeaterPage($this->parent, $this->field); 
 			$this->add($page);
 		} else {
 			$this->trackChange('add');
@@ -103,7 +105,43 @@ class RepeaterPageArray extends PageArray {
 		$newArray = $this->wire(new $class($this->parent, $this->field));
 		return $newArray;
 	}
+	
+	/**
+	 * Track an item added
+	 *
+	 * @param Wire|mixed $item
+	 * @param int|string $key
+	 *
+	 */
+	protected function trackAdd($item, $key) {
+		/** @var RepeaterPage $item */
+		$item->traversalPages($this);
+		parent::trackAdd($item, $key);
+	}
 
+	/**
+	 * Track an item removed
+	 *
+	 * @param Wire|mixed $item
+	 * @param int|string $key
+	 *
+	 */
+	protected function trackRemove($item, $key) {
+		/** @var RepeaterPage $item */
+		if($item->traversalPages() === $this) $item->traversalPages(false);
+		parent::trackRemove($item, $key);
+	}
+
+	public function __debugInfo() {
+		$info = array(
+			'field' => $this->field ? $this->field->debugInfoSmall() : '', 
+		);
+		if($this->parent && $this->parent->id) {
+			$info['parent'] = $this->parent->debugInfoSmall(); 
+		}
+		$info = array_merge($info, parent::__debugInfo());
+		return $info;
+	}
 	
 }
 

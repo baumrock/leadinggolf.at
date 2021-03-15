@@ -5,13 +5,13 @@
  *
  * This is the process assigned to the processwire/setup/language-translator/ page.
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
  *
  * 
  * @method string executeList()
  * @method string executeAdd()
- * @method string processAdd(Inputfield $field)
+ * @method string processAdd(Inputfield $field = null, $sourceFilename = '')
  * @method string executeEdit()
  * @method processEdit($form, $textdomain, $translations)
  * 
@@ -38,6 +38,14 @@ class ProcessLanguageTranslator extends Process {
 	 *
 	 */
 	protected $untranslated = array();
+
+	/**
+	 * Alternate translations indexed by hash-key
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $alternates = array(); 
 
 	/**
 	 * Optional comment labels for translations indexed by hash.
@@ -80,11 +88,11 @@ class ProcessLanguageTranslator extends Process {
 	public function init() {
 
 		// if language specified as a GET var in the URL, then pick it up and use it (storing in session)
-		$id = $this->input->get->language_id;
+		$id = $this->input->get('language_id');
 		if($id) {
 			$this->setLanguage((int) $id);
-		} else if($this->session->translateLanguageID) {
-			$this->setLanguage($this->session->translateLanguageID);
+		} else if($this->session->get('translateLanguageID')) {
+			$this->setLanguage($this->session->get('translateLanguageID'));
 		}
 		// else throw new WireException("No language specified"); 
 		parent::init();
@@ -110,7 +118,7 @@ class ProcessLanguageTranslator extends Process {
 		if(!$language instanceof Language || !$language->id) throw new WireException($this->_("Unknown/invalid language"));
 		if(!$language->editable()) throw new WirePermissionException($this->_('You do not have permission to edit this language'));
 		$this->language = $language;
-		$this->session->translateLanguageID = $language->id;
+		$this->session->set('translateLanguageID', $language->id);
 		$this->translator = new LanguageTranslator($this->language);
 	}
 
@@ -192,6 +200,11 @@ class ProcessLanguageTranslator extends Process {
 			'site' => $this->findTranslatableFiles($this->wire('config')->paths->site, $useCache),
 			'wire' => $this->findTranslatableFiles($this->wire('config')->paths->wire, $useCache)
 		);
+		
+		if($this->input->get('refresh')) {
+			$this->wire('session')->redirect("../../languages/edit/?id={$this->language->id}"); 
+			return '';
+		}
 
 		$textdomains = array();
 		foreach(array('language_files', 'language_files_site') as $fieldName) {
@@ -260,6 +273,7 @@ class ProcessLanguageTranslator extends Process {
 			$form->add($field);
 		}
 
+		/** @var InputfieldText $field */
 		$field = $this->modules->get('InputfieldText');
 		$field->attr('name', 'filename');
 		$field->label = $this->_('Enter file to translate');
@@ -269,6 +283,7 @@ class ProcessLanguageTranslator extends Process {
 		$field->collapsed = Inputfield::collapsedYes;
 		$form->add($field);
 
+		/** @var InputfieldSubmit $submit */
 		$submit = $this->modules->get("InputfieldSubmit");
 		$submit->attr('id+name', 'submit_add');
 		$submit->icon = 'plane';
@@ -282,8 +297,8 @@ class ProcessLanguageTranslator extends Process {
 		$submit->icon = 'refresh';
 		$form->add($submit);
 
-		if($this->input->post->submit_add) {
-			if($this->input->post->filename) {
+		if($this->input->post('submit_add')) {
+			if($this->input->post('filename')) {
 				$this->processAdd($field);
 
 			} else {
@@ -302,10 +317,12 @@ class ProcessLanguageTranslator extends Process {
 					}
 				}
 				if(count($newTextdomains) == 1) {
-					return $this->session->redirect("../edit/?language_id={$this->language->id}&textdomain=" . reset($newTextdomains));
+					$this->session->redirect("../edit/?language_id={$this->language->id}&textdomain=" . reset($newTextdomains));
+					return '';
 				} else if(count($newTextdomains) > 1) {
 					// render form again
-					return $this->session->redirect("../../languages/edit/?id={$this->language->id}");
+					$this->session->redirect("../../languages/edit/?id={$this->language->id}");
+					return '';
 				}
 			}
 
@@ -341,7 +358,9 @@ class ProcessLanguageTranslator extends Process {
 			if($this->parseTranslatableFile($pathname)) {
 
 				$textdomain = $this->translator->addFileToTranslate($filename);
-				if($textdomain) return $this->session->redirect("../edit/?language_id={$this->language->id}&textdomain=$textdomain");
+				if($textdomain) {
+					$this->session->redirect("../edit/?language_id={$this->language->id}&textdomain=$textdomain");
+				}
 
 				$this->error($this->_('That file is already in the system'));
 
@@ -356,7 +375,9 @@ class ProcessLanguageTranslator extends Process {
 		return false;
 	}
 
-	protected function executeEditField($hash, $untranslated, $translated) {
+	protected function executeEditField($hash, $untranslated, $translated, $alternates) {
+
+		/** @var InputfieldText $field */
 
 		if(strlen($untranslated) < 128) {
 			$field = $this->modules->get("InputfieldText");
@@ -365,8 +386,6 @@ class ProcessLanguageTranslator extends Process {
 			$field->attr('rows', 3);
 		}
 		
-		/** @var InputfieldText $field */
-
 		$field->attr('id+name', $hash);
 		$field->set('textFormat', Inputfield::textFormatNone);
 		$field->attr('value', $translated);
@@ -388,7 +407,22 @@ class ProcessLanguageTranslator extends Process {
 			}
 		}
 
-		if((empty($translated) || $translated === '+') && !$field instanceof InputfieldTextarea) {
+		if($this->language && !$this->language->isDefault()) {
+			foreach($alternates as $altText => $altTranslation) {
+				if(empty($altText) || empty($altTranslation)) continue;
+				$field->placeholder = $altTranslation;
+				$field->notes = trim(
+					"$field->notes\n" .
+					sprintf(
+						$this->_('Fallback: when untranslated, the text “%1$s” is used, which is translated from “%2$s”.'),
+						$altTranslation, $altText
+					)
+				);
+				break;
+			}
+		}
+
+		if((!strlen($translated) || $translated === '+') && !$field instanceof InputfieldTextarea) {
 			$languages = $this->wire('languages');
 			$languages->setLanguage($this->language);
 			$this->wire('user')->language = $this->language;
@@ -423,20 +457,24 @@ class ProcessLanguageTranslator extends Process {
 		$fieldset->attr('id+name', 'abandoned_fieldset');
 		$fieldset->description = $this->_('The following unused translations were found. This means that the original untranslated text was either changed or deleted. It is recommended that you delete abandoned translations unless you need to keep them to copy/paste to a new translation.');
 		$fieldset->collapsed = Inputfield::collapsedYes;
-
 		$n = 0;
+		
 		foreach($translations as $hash => $translation) {
 
 			// if the hash still exists in the untranslated phrases, then it is not abandoned
 			if(isset($this->untranslated[$hash])) continue;
-
+			if(!isset($translation['text'])) $translation['text'] = '';
+			if(!$this->isAbandonedHash($hash)) continue;
+			
 			$n++;
+			/** @var InputfieldCheckbox $field */
 			$field = $this->modules->get("InputfieldCheckbox");
 			$field->attr('name', "abandoned$n");
 			$field->attr('value', $hash);
-			$field->description = empty($translation['text']) ? $this->_('[empty]') : $translation['text'];
+			$field->description = !strlen($translation['text']) ? $this->_('[empty]') : $translation['text'];
 			$field->label = $this->_('Delete?'); // Checkbox label
 			$field->icon = 'trash-o';
+			
 			$fieldset->add($field);
 		}
 
@@ -458,7 +496,7 @@ class ProcessLanguageTranslator extends Process {
 		$this->breadcrumb('../add/', $this->_x('Select File(s)', 'breadcrumb'));
 		$this->headline($this->_x('Translate File', 'headline'));
 
-		$textdomain = $this->input->get->textdomain;
+		$textdomain = $this->input->get('textdomain');
 		$file = $this->translator->textdomainToFilename($textdomain);
 		if(!$file) {
 			if($this->input->get('filename')) {
@@ -478,7 +516,7 @@ class ProcessLanguageTranslator extends Process {
 			$this->session->redirect('../add/');
 		}
 
-		$numFound = $this->parseTranslatableFile($file);
+		$this->parseTranslatableFile($file);
 
 		/** @var InputfieldForm $form */
 		$form = $this->modules->get('InputfieldForm');
@@ -496,11 +534,19 @@ class ProcessLanguageTranslator extends Process {
 
 		foreach($this->untranslated as $hash => $untranslated) {
 			$translated = isset($translations[$hash]) ? $translations[$hash]['text'] : '';
-			$form->add($this->executeEditField($hash, $untranslated, $translated));
+			$alternates = array();
+			if(isset($this->alternates[$hash])) {
+				foreach($this->alternates[$hash] as $altHash => $altText) {
+					if(!isset($translations[$altHash])) continue;
+					$alternates[$altText] = $translations[$altHash]['text'];
+				}
+			}
+			$form->add($this->executeEditField($hash, $untranslated, $translated, $alternates));
 		}
 
 		$this->executeEditAbandoned($translations, $form);
 
+		/** @var InputfieldCheckbox $field */
 		$field = $this->modules->get('InputfieldCheckbox');
 		$field->attr('id+name', 'untranslated');
 		$field->label = $this->_('Only show blocks that are not yet translated');
@@ -516,7 +562,7 @@ class ProcessLanguageTranslator extends Process {
 		$submit->addActionValue('next', $this->_('Save + Next'), 'edit');
 		$form->add($submit);
 
-		if($this->input->post->save_translations) $this->processEdit($form, $textdomain, $translations);
+		if($this->input->post('save_translations')) $this->processEdit($form, $textdomain, $translations);
 
 		return $form->render();
 	}
@@ -604,6 +650,7 @@ class ProcessLanguageTranslator extends Process {
 		$parser = new LanguageParser($this->translator, $file);
 		$this->comments = $parser->getComments();
 		$this->untranslated = $parser->getUntranslated();
+		$this->alternates = $parser->getAlternates();
 		return $parser->getNumFound();
 	}
 
@@ -612,7 +659,9 @@ class ProcessLanguageTranslator extends Process {
 	 *
 	 */
 	protected function addBreadcrumbs() {
-		$languagesPage = $this->pages->get($this->modules->get('LanguageSupport')->languagesPageID);
+		/** @var LanguageSupport $languageSupport */
+		$languageSupport = $this->modules->get('LanguageSupport');
+		$languagesPage = $this->pages->get($languageSupport->languagesPageID);
 		$url = $languagesPage->url;
 		$this->wire('breadcrumbs')->add(new Breadcrumb($url, $languagesPage->title));
 		$this->wire('breadcrumbs')->add(new Breadcrumb($url . "edit/?id={$this->language->id}", $this->language->get('title|name')));
@@ -647,25 +696,36 @@ class ProcessLanguageTranslator extends Process {
 		}
 		
 		if(is_null($this->fp)) {
-			$f = $this->language->filesManager()->path() . '.phrase-index.txt'; // @todo make hidden
-			if(is_file($f)) unlink($f);
+			$f = $this->language->filesManager()->path() . '.phrase-index.txt'; 
+			if(is_file($f)) $this->wire('files')->unlink($f);
 			$this->fp = fopen($f, "a");
 		}
 
 		$files = array();
 		$dirs = array();
 		$root = $this->wire('config')->paths->root;
+		$assetsDir = '/site/assets/';
+		if(DIRECTORY_SEPARATOR != '/') $assetsDir = str_replace('/', DIRECTORY_SEPARATOR, $assetsDir);
 
 		$find1 = array('$this->_(', '$this->_n(', '$this->_x(');
 		$find2 = array('__(', '_n(', '_x(');
+	
+		try {
+			$dirIterator = new \DirectoryIterator($path);
+		} catch(\Exception $e) {
+			$this->warning($e->getMessage());
+			$dirIterator = false;
+		}
+		
+		if($dirIterator === false) return array();
 
-		foreach(new \DirectoryIterator($path) as $file) {
+		foreach($dirIterator as $file) {
 
 			if($file->isDot()) continue;
 			if(substr($file->getBasename(), 0, 1) == '.') continue; // skip hidden;
 			if($file->isDir()) {
 				$pathname = $file->getPathname();
-				if(strpos($pathname, '/site/assets/') !== false) continue; // avoid descending into /site/assets/
+				if(strpos($pathname, $assetsDir) !== false) continue; // avoid descending into /site/assets/
 				$dirs[] = $pathname;
 				continue;
 			}
@@ -701,7 +761,7 @@ class ProcessLanguageTranslator extends Process {
 				$files[$pathname] = $pathname;
 				if(preg_match_all('/\b(?:_[_nx]\(|->_[nx]?\()[\'"](.+?)[\'"]\)/', $text, $matches)) {
 					foreach($matches[1] as $key => $phrase) {
-						$phrase = str_replace(array('|', '^', "\n", "\r", "\t"), ' ', $phrase);
+						$phrase = str_replace(array('|', '^', "\n", "\r", "\t", "&lt;", "&gt;"), ' ', strip_tags($phrase));
 						fwrite($this->fp, "|$phrase");
 					}
 					$textdomain = $this->translator->filenameToTextdomain($pathname);
@@ -728,6 +788,32 @@ class ProcessLanguageTranslator extends Process {
 		}
 
 		return $files;
+	}
+
+	/**
+	 * Is the given translation hash abandoned?
+	 * 
+	 * @param string $hash
+	 * @return bool
+	 * @since 3.0.151
+	 * 
+	 */
+	protected function isAbandonedHash($hash) {
+		// if the hash still exists in the untranslated phrases, then it is not abandoned
+		if(isset($this->untranslated[$hash])) return false;
+		if($this->language && $this->language->isDefault()) return true;
+		$abandoned = true;
+
+		foreach($this->alternates as $srcHash => $values) {
+			if(isset($values[$hash]) && isset($this->untranslated[$srcHash])) {
+				// $text = $this->untranslated[$srcHash];
+				// $notes = "Currently used as fallback translation for: " . $text;
+				$abandoned = false;
+				break;
+			}
+		}
+		
+		return $abandoned;
 	}
 }
 

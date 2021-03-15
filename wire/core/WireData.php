@@ -211,7 +211,7 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 	 *   - `$this` - If you are setting a value.
 	 */
 	public function data($key = null, $value = null) {
-		if(is_null($key)) return $this->data;
+		if($key === null) return $this->data;
 		if(is_array($key)) {
 			if($value === true) {
 				$this->data = $key;
@@ -219,7 +219,7 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 				$this->data = array_merge($this->data, $key);
 			}
 			return $this;
-		} else if(is_null($value)) {
+		} else if($value === null) {
 			return isset($this->data[$key]) ? $this->data[$key] : null;
 		} else {
 			$this->data[$key] = $value; 
@@ -265,9 +265,13 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 			$keys = array();
 		}
 		if($from->wire($key) !== null) return null; // don't allow API vars to be retrieved this way
-		if($from instanceof WireData) $value = $from->get($key);
-			else if($from instanceof WireArray) $value = $from->getProperty($key);
-			else $value = $from->$key;
+		if($from instanceof WireData) {
+			$value = $from->get($key);
+		} else if($from instanceof WireArray) {
+			$value = $from->getProperty($key);
+		} else {
+			$value = $from->$key;
+		}
 		if(!count($keys)) return $value; // final value
 		if(is_object($value)) {
 			if(count($keys) > 1) {
@@ -394,6 +398,7 @@ class WireData extends Wire implements \IteratorAggregate, \ArrayAccess {
 	 *
 	 */
 	public function has($key) {
+		if(isset($this->data[$key])) return true; // optimization
 		return ($this->get($key) !== null); 
 	}
 

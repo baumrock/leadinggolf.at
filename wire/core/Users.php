@@ -134,9 +134,12 @@ class Users extends PagesType {
 	 * 
 	 */
 	public function newUser() {
+		$template = $this->wire('templates')->get('user');
+		$pageClass = $template ? $template->getPageClass(false) : 'User';
+		if($pageClass !== 'User' && strpos($pageClass, 'User') === false) $pageClass = 'User';
 		return $this->wire('pages')->newPage(array(
 			'template' => 'user',
-			'pageClass' => 'User'
+			'pageClass' => $pageClass 
 		));
 	}
 	
@@ -157,7 +160,7 @@ class Users extends PagesType {
 			$role = $this->wire('roles')->get($this->wire('config')->guestUserRolePageID);
 			if($role->id && !$user->hasRole($role)) $user->addRole($role);
 		}
-		return array();
+		return parent::___saveReady($user);
 	}
 
 }

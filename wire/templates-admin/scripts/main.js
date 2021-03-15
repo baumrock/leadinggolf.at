@@ -87,7 +87,9 @@ var ProcessWireAdmin = {
 			}
 		}).on('click', '.ui-button', function() {
 			$(this).removeClass("ui-state-default").addClass("ui-state-active"); // .effect('highlight', {}, 100); 
-		}).on('click', 'a > button', function() {
+		});
+		/*
+		.on('click', 'a > button', function() {
 			var $a = $(this).parent();
 			var target = $a.attr('target');
 			if(typeof target != "undefined" && target == '_blank') {
@@ -97,6 +99,7 @@ var ProcessWireAdmin = {
 				window.location = $a.attr('href');
 			}
 		});
+		*/
 	},
 
 	/**
@@ -337,13 +340,17 @@ var ProcessWireAdmin = {
 						
 						if(this.url == 'navJSON') {
 							// click triggers another navJSON load
-						} else {
-							var url = this.url.indexOf('/') === 0 ? this.url : data.url + this.url;
+						} else if(this.url.indexOf('/') === 0) {
+							url = this.url;
+						} else if(this.url.length) {
+							url = data.url + this.url;
 						}
 						
 						var $li = $("<li class='ui-menu-item'></li>"); 
-						var $a = $("<a href='" + url + "'>" + icon + this.label + "</a>");
+						var $a = $("<a>" + icon + this.label + "</a>");
 						var $ulSub = null;
+						
+						if(url.length) $a.attr('href', url);
 					
 						if(this.navJSON) {
 							$a.attr('data-json', this.navJSON).addClass('pw-has-items pw-has-ajax-items');
@@ -364,7 +371,8 @@ var ProcessWireAdmin = {
 					});
 					
 					$ul.addClass('navJSON').addClass('length' + parseInt(data.list.length)).hide();
-					if($ul.children().length) $ul.css('opacity', 1.0).fadeIn('fast');
+					if($ul.children().length) $ul.css('opacity', 1.0);
+					if(hoveredDropdownAjaxItem == $a) $ul.fadeIn('fast');
 					
 					if(numSubnavJSON) {
 						var numParents = $ul.parents('ul').length;
@@ -443,16 +451,40 @@ var ProcessWireAdmin = {
 };
 
 if(typeof ProcessWire != "undefined") {
-	ProcessWire.confirm = function(message, func) {
-		if(typeof vex != "undefined" && typeof func != "undefined") {
+	/**
+	 * Confirmation dialog
+	 * 
+	 * ~~~~~
+	 * ProcessWire.confirm('Send this message now?', function() {
+	 *   // user clicked Ok
+	 * }, function() {
+	 *   // user clicked Cancel
+	 * }); 
+	 * ~~~~~
+	 * 
+	 * @param message Message to display (or question to ask)
+	 * @param funcOk Callback called on "Ok"
+	 * @param funcCancel Callback called on "Cancel" (optional)
+	 * 
+	 */
+	ProcessWire.confirm = function(message, funcOk, funcCancel) {
+		if(typeof vex != "undefined" && typeof funcOk != "undefined") {
 			vex.dialog.confirm({
 				message: message,
 				callback: function(v) {
-					if(v) func();
+					if(v) {
+						funcOk();
+					} else if(typeof funcCancel != "undefined") {
+						funcCancel();
+					}
 				}
 			});
-		} else if(typeof func != "undefined") {
-			if(confirm(message)) func();
+		} else if(typeof funcOk != "undefined") {
+			if(confirm(message)) {
+				funcOk();
+			} else if(typeof funcCancel != "undefined") {
+				funcCancel();
+			}
 		} else {
 			// regular JS confirm behavior
 			return confirm(message);

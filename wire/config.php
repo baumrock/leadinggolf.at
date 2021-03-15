@@ -142,6 +142,44 @@ $config->useFunctionsAPI = false;
  */
 $config->useMarkupRegions = false;
 
+/**
+ * Use custom page classes? Specify boolean true to enable. 
+ *
+ * When enabled, if a class with name "[TemplateName]Page" (in ProcessWire namespace) exists
+ * in /site/classes/[TemplateName]Page.php, and it extends ProcessWire’s Page class, then the 
+ * Page will be created with that class rather than the default Page class. For instance, 
+ * template “home” would look for a class named “HomePage” and template "blog-post" (or 
+ * "blog_post") would look for a class named “BlogPostPage” (file: BlogPostPage.php). 
+ * 
+ * If you create a file named /site/classes/DefaultPage.php with a DefaultPage class within
+ * it (that extends Page), then it will be used for all pages that would otherwise use the 
+ * `Page` class. 
+ * 
+ * @var bool|string
+ * @since 3.0.152
+ *
+ */
+$config->usePageClasses = false;
+
+/**
+ * Disable all HTTPS requirements?
+ * 
+ * Use this option only for development or staging environments, on sites where you are 
+ * otherwise requiring HTTPS. By setting this option to something other than false, you
+ * can disable any HTTPS requirements specified per-template, enabling you to use your 
+ * site without SSL during development or staging, etc.
+ * 
+ * The following options are available:
+ * - boolean true: Disable HTTPS requirements globally
+ * - string containing hostname: Disable HTTPS requirements only for specified hostname.
+ * - array containing hostnames: Disable HTTPS requirements for specified hostnames. 
+ * 
+ * @var bool|string|array
+ *
+ */
+$config->noHTTPS = false;
+
+
 
 /*** 2. DATES & TIMES *************************************************************************/
 
@@ -228,8 +266,8 @@ $config->sessionExpireSeconds = 86400;
  *   // if there is a session cookie, a session is likely already in use so keep it going
  *   if($session->hasCookie()) return true;
  * 
- *   // if URL is an admin URL, allow session
- *   if(strpos($_SERVER['REQUEST_URI'], $session->config->urls->admin) === 0) return true;
+ *   // if URL is an admin URL, allow session (replace /processwire/ with your admin URL)
+ *   if(strpos($_SERVER['REQUEST_URI'], '/processwire/) === 0) return true;
  * 
  *   // otherwise disallow session
  *   return false;
@@ -255,32 +293,72 @@ $config->sessionChallenge = true;
 /**
  * Use session fingerprint?
  * 
- * Should login sessions be tied to IP and user agent?
- * IP fingerprinting may be problematic on dynamic IPs. 
- * Below are the possible values: 
+ * Should login sessions also be tied to a fingerprint of the browser?
+ * Fingerprinting can be based upon browser-specific headers and/or
+ * IP addresses. But note that IP fingerprinting will be problematic on 
+ * dynamic IPs.
  * 
- * 	0 or false: Fingerprint off
- * 	1 or true: Fingerprint on with default/recommended setting (currently 10). 
- * 	2: Fingerprint only the remote IP
- * 	4: Fingerprint only the forwarded/client IP (can be spoofed)
- * 	8: Fingerprint only the useragent
- * 	10: Fingerprint the remote IP and useragent (default)
- * 	12: Fingerprint the forwarded/client IP and useragent
- * 	14: Fingerprint the remote IP, forwarded/client IP and useragent (all). 
+ * Predefined settings:
  * 
- * If using fingerprint in an environment where the user’s 
- * IP address may change during the session, you should
- * fingerprint only the useragent, or disable fingerprinting.
+ * - 0 or false: Fingerprint off
+ * - 1 or true: Fingerprint on with default setting (remote IP & useragent)
+ * 
+ * Custom settings:
+ * 
+ * - 2: Remote IP
+ * - 4: Forwarded/client IP (can be spoofed)
+ * - 8: Useragent
+ * - 16: Accept header
+ * 
+ * To use the custom settings above, select one or more of those you want 
+ * to fingerprint, note the numbers, and use them like in the examples:
+ * ~~~~~~ 
+ * // to fingerprint just remote IP
+ * $config->sessionFingerprint = 2; 
+ * 
+ * // to fingerprint remote IP and useragent: 
+ * $config->sessionFingerprint = 2 | 8;
+ * 
+ * // to fingerprint remote IP, useragent and accept header:
+ * $config->sessionFingerprint = 2 | 8 | 16; 
+ * ~~~~~~
+ * 
+ * If using fingerprint in an environment where the user’s IP address may 
+ * change during the session, you should fingerprint only the useragent 
+ * and/or accept header, or disable fingerprinting.
  *
- * If using fingerprint with an AWS load balancer, you should 
- * use one of the options that uses the “client IP” rather than 
- * the “remote IP”, fingerprint only the useragent, or disable 
- * fingerprinting.
+ * If using fingerprint with an AWS load balancer, you should use one of 
+ * the options that uses the “client IP” rather than the “remote IP”, 
+ * fingerprint only useragent and/or accept header, or disable fingerprinting.
  * 
  * @var int
  *
  */
 $config->sessionFingerprint = 1;
+
+/**
+ * Force current session IP address (overriding auto-detect)
+ * 
+ * This overrides the return value of `$session->getIP()` method.
+ * Use this property only for setting the IP address. To get the IP address
+ * always use the `$session->getIP()` method instead. 
+ * 
+ * This is useful if you are in an environment where the remote IP address 
+ * comes from some property other than the REMOTE_ADDR in $_SERVER. For instance,
+ * if you are using a load balancer, what’s usually detected as the IP address is
+ * actually the IP address between the load balancer and the server, rather than
+ * the client IP address. So in that case, you’d want to set this property as
+ * follows:
+ * ~~~~~
+ * $config->sessionForceIP = $_SERVER['HTTP_X_FORWARDED_FOR'];
+ * ~~~~~
+ * If you don’t have a specific need to override the IP address of the user
+ * then you should leave this blank.
+ * 
+ * @var string
+ * 
+ */
+$config->sessionForceIP = '';
 
 /**
  * Use secure cookies when on HTTPS?
@@ -358,6 +436,7 @@ $config->loginDisabledRoles = array(
  * 
  * Set to false do disable the option for compiled template files. 
  * When set to true, it will be used unless a given template's 'compile' option is set to 0.
+ * This setting also covers system status files like /site/ready.php, /site/init.php, etc. (3.0.142+)
  * 
  * @var bool
  * 
@@ -552,19 +631,60 @@ $config->contentTypes = array(
  */
 $config->fileContentTypes = array(
 	'?' => '+application/octet-stream',
+	'txt' => '+text/plain',
+	'csv' => '+text/csv',
 	'pdf' => '+application/pdf',
 	'doc' => '+application/msword',
-	'docx' => '+application/msword',
-	'xls' => '+application/excel',
-	'xlsx' => '+application/excel',
+	'docx' => '+application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+	'xls' => '+application/vnd.ms-excel',
+	'xlsx' => '+application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+	'ppt' => '+application/vnd.ms-powerpoint',
+	'pptx' => '+application/vnd.openxmlformats-officedocument.presentationml.presentation',
 	'rtf' => '+application/rtf',
 	'gif' => 'image/gif',
 	'jpg' => 'image/jpeg',
 	'jpeg' => 'image/jpeg',
-	'png' => 'image/x-png',
-	'svg' => 'image/svg+xml'
+	'png' => 'image/png',
+	'svg' => 'image/svg+xml',
+	'webp' => 'image/webp',
+	'zip' => '+application/zip',
+	'mp3' => 'audio/mpeg',
 	);
 
+/**
+ * Named predefined image sizes and options
+ *
+ * Specify associative arrays of predefined image sizes indexed by name.
+ * Each item should have at least 'width' and 'height' indexes. But they can also have any
+ * other option accepted by the `Pageimage::size()` method `$options` argument.
+ *
+ * You can use your defined sizes by name in a Pageimage::size() call by specifying the
+ * size name rather than the `$width` argument, like this:
+ * ~~~~~~
+ * $image = $page->images->first();
+ * $landscape = $image->size('landscape');
+ * echo "<img src='$landscape->url' alt='$landscape->description' />";
+ * ~~~~~~
+ * Feel free to completely overwrite the default $config->imageSizes in your /site/config.php
+ * file * as this particular setting is not used by the core.
+ *
+ * @var array
+ * @since 3.0.151
+ *
+ */
+$config->imageSizes = array(
+	// Example 1: Landscape (try this one if you want to test the feature)
+	'landscape' => array('width' => 600, 'height' => 300),
+	
+	// Example 2: Thumbnails in admin (260 height, proportional width) 
+	// 'admin' => array('width' => 0, 'height' => 260),
+	
+	// Example 3: Portrait, with additional options: 
+	// 'portrait' => array('width' => 300, 'height' => 500, 'quality' => 80, 'suffix' => 'portrait'),
+	
+	// Example 4: Square size cropping towards (preserving) top/center (north): 
+	// 'squareNorth' => array('width' => 400, 'height' => 400, 'cropping' => 'north'),
+);
 
 /**
  * Image sizer options
@@ -578,6 +698,7 @@ $config->fileContentTypes = array(
  * #property string sharpening Sharpening mode, enter one of: none, soft, medium, strong
  * #property int quality Image quality, enter a value between 1 and 100, where 100 is highest quality (and largest files)
  * #property float defaultGamma Default gamma of 0.5 to 4.0 or -1 to disable gamma correction (default=2.0)
+ * #property bool webpAdd Create a WEBP copy with every new image variation? (default=false)
  * 
  * @var array
  *
@@ -591,6 +712,25 @@ $config->imageSizerOptions = array(
 	'quality' => 90, // quality: 1-100 where higher is better but bigger
 	'hidpiQuality' => 60, // Same as above quality setting, but specific to hidpi images
 	'defaultGamma' => 2.0, // defaultGamma: 0.5 to 4.0 or -1 to disable gamma correction (default=2.0)
+	'webpAdd' => false, // set this to true, if the imagesizer engines should create a Webp copy with every (new) image variation
+	);
+
+/**
+ * Options for webp images
+ * 
+ * #property int quality Quality setting where 1-100 where higher is better but bigger
+ * #property bool useSrcExt Use source file extension in webp filename? (file.jpg.webp rather than file.webp)
+ * #property bool useSrcUrlOnSize Fallback to source file URL when webp file is larger than source?
+ * #property bool useSrcUrlOnFail Fallback to source file URL when webp file fails for some reason?
+ * 
+ * @var array
+ * 
+ */
+$config->webpOptions = array(
+	'quality' => 90, // Quality setting of 1-100 where higher is better but bigger
+	'useSrcExt' => false, // Use source file extension in webp filename? (file.jpg.webp rather than file.webp)
+	'useSrcUrlOnSize' => true, // Fallback to source file URL when webp file is larger than source?
+	'useSrcUrlOnFail' => true, // Fallback to source file URL when webp file fails for some reason?
 	);
 
 /**
@@ -788,6 +928,16 @@ $config->pageNameCharset = 'ascii';
 $config->pageNameWhitelist = '-_.abcdefghijklmnopqrstuvwxyz0123456789æåäßöüđжхцчшщюяàáâèéëêěìíïîõòóôøùúûůñçčćďĺľńňŕřšťýžабвгдеёзийклмнопрстуфыэęąśłżź';
 
 /**
+ * Name to use for untitled pages
+ * 
+ * When page has this name, the name will be changed automatically (to a field like title) when it is possible to do so.
+ * 
+ * @var string
+ * 
+ */
+$config->pageNameUntitled = "untitled";
+
+/**
  * Maximum paginations
  *
  * Maxmum number of supported paginations when using page numbers.
@@ -812,10 +962,78 @@ $config->maxPageNum = 999;
  */
 $config->wireInputOrder = 'get post';
 
+/**
+ * Lazy-load get/post/cookie input into $input API var?
+ * 
+ * This is an experimental option for reduced memory usage when a lot of input data is present. 
+ * 
+ * This prevents PW from keeping separate copies of get/post/cookie data, and it instead works
+ * directly from the PHP $_GET, $_POST and $_COOKIE vars.
+ * 
+ * This option is also useful in that anything you SET to PW’s $input->get/post/cookie also gets
+ * set to the equivalent PHP $_GET, $_POST and $_COOKIE. 
+ * 
+ * @var bool
+ * 
+ */
+$config->wireInputLazy = false;
 
+/**
+ * Options for setting cookies from $input->cookie()->set(...)
+ * 
+ * Additional details about some of these options can also be found on PHP’s [setcookie](https://www.php.net/manual/en/function.setcookie.php) doc page.
+ * 
+ * #property int age Max age of cookies in seconds or 0 to expire with session (3600=1hr, 86400=1day, 604800=1week, 2592000=30days, etc.)
+ * #property string|null Cookie path or null for PW installation’s root URL (default=null).
+ * #property string|null|bool domain Cookie domain: null for current hostname, true for all subdomains of current domain, domain.com for domain and all subdomains, www.domain.com for www subdomain.
+ * #property bool|null secure Transmit cookies only over secure HTTPS connection? (true, false, or null to auto-detect, using true option for cookies set when HTTPS is active).
+ * #property bool httponly When true, cookie is http/server-side and not visible to JS code in most browsers.
+ * 
+ * @var array
+ * @since 3.0.141
+ * 
+ */
+$config->cookieOptions = array(
+	'age' => 604800, // Max age of cookies in seconds or 0 to expire with session (3600=1hr, 86400=1day, 604800=1week, 2592000=30days, etc.)
+	'path' => null, // Cookie path/URL or null for PW installation’s root URL (default=null).
+	'domain' => null, // Cookie domain: null for current hostname, true for all subdomains of current domain, domain.com for domain and all subdomains, www.domain.com for www subdomain.
+	'secure' => null, // Transmit cookies only over secure HTTPS connection? (true, false, or null to auto-detect, substituting true for cookies set when HTTPS is active).
+	'httponly' => false, // When true, cookie is http/server-side only and not visible to client-side JS code.
+	'fallback' => true, // If set cookie fails (perhaps due to output already sent), attempt to set at beginning of next request? (default=true)
+);
 
 
 /*** 7. DATABASE ********************************************************************************/
+
+/**
+ * Database name
+ *
+ */
+$config->dbName = '';
+
+/**
+ * Database username
+ *
+ */
+$config->dbUser = '';
+
+/**
+ * Database password
+ *
+ */
+$config->dbPass = '';
+
+/**
+ * Database host
+ *
+ */
+$config->dbHost = '';
+
+/**
+ * Database port
+ *
+ */
+$config->dbPort = 3306;
 
 /**
  * Database character set
@@ -870,30 +1088,6 @@ $config->dbPath = '';
  * 
  */
 $config->dbLowercaseTables = true;
-
-/**
- * Database username
- * 
- */
-$config->dbUser = '';
-
-/**
- * Database password
- * 
- */
-$config->dbPass = '';
-
-/**
- * Database host
- * 
- */
-$config->dbHost = '';
-
-/**
- * Database port
- * 
- */
-$config->dbPort = 3306;
 
 /**
  * Database init command (PDO::MYSQL_ATTR_INIT_COMMAND)
@@ -985,7 +1179,7 @@ $config->moduleCompile = true;
  * @var string
  *
  */
-$config->moduleServiceURL = 'http://modules.processwire.com/export-json/';
+$config->moduleServiceURL = 'https://modules.processwire.com/export-json/';
 
 /**
  * Modules service API key
@@ -995,7 +1189,30 @@ $config->moduleServiceURL = 'http://modules.processwire.com/export-json/';
  * @var string
  *
  */
-$config->moduleServiceKey = (__NAMESPACE__ ? 'pw300' : 'pw280');
+$config->moduleServiceKey = 'pw301';
+
+/**
+ * Allowed module installation options (in admin)
+ * 
+ * Module installation options you want to be available from the admin Modules > Install tab. 
+ * For any of the options below, specify boolean `true` to allow, `false` to disallow, or 
+ * specify string `'debug'` to allow only when ProcessWire is in debug mode. 
+ * 
+ * - `directory`: Allow installation or upgrades from ProcessWire modules directory?
+ * - `upload`: Allow installation by file upload?
+ * - `download`: Allow installation by file download from URL?
+ * 
+ * @todo consider whether the 'directory' option should also be limited to 'debug' only.
+ * 
+ * @var array
+ * @since 3.0.163
+ * 
+ */
+$config->moduleInstall = array(
+	'directory' => true, // allow install from ProcessWire modules directory? 
+	'upload' => 'debug', // allow install by module file upload?
+	'download' => 'debug', // allow install by download from URL?
+);
 
 /**
  * Substitute modules
@@ -1017,11 +1234,39 @@ $config->substituteModules = array(
  * Note you can add any other properties to the wireMail array that are supported by WireMail settings
  * like we’ve done with from, fromName and headers here. Any values set here become defaults for the 
  * WireMail module. 
+ *
+ * Blacklist property
+ * ==================
+ * The blacklist property lets you specify email addresses, domains, partial host names or regular
+ * expressions that prevent sending to certain email addresses. This is demonstrated by example:
+ * ~~~~~
+ * // Example of blacklist definition
+ * $config->wireMail('blacklist', [
+ *   'email@domain.com', // blacklist this email address
+ *   '@host.domain.com', // blacklist all emails ending with @host.domain.com
+ *   '@domain.com', // blacklist all emails ending with @domain.com
+ *   'domain.com', // blacklist any email address ending with domain.com (would include mydomain.com too).
+ *   '.domain.com', // blacklist any email address at any host off domain.com (domain.com, my.domain.com, but NOT mydomain.com).
+ *   '/something/', // blacklist any email containing "something". PCRE regex assumed when "/" is used as opening/closing delimiter.
+ *   '/.+@really\.bad\.com$/', // another example of using a PCRE regular expression (blocks all "@really.bad.com").
+ * ]);
+ *
+ * // Test out the blacklist
+ * $email = 'somebody@bad-domain.com';
+ * $result = $mail->isBlacklistEmail($email, [ 'why' => true ]);
+ * if($result === false) {
+ *   echo "<p>Email address is not blacklisted</p>";
+ * } else {
+ *   echo "<p>Email is blacklisted by rule: $result</p>";
+ * }
+ * ~~~~~
  * 
  * #property string module Name of WireMail module to use or blank to auto-detect. (default='')
  * #property string from Default from email address, when none provided at runtime. (default=$config->adminEmail)
  * #property string fromName Default from name string, when none provided at runtime. (default='')
+ * #property string newline What to use for newline if different from RFC standard of "\r\n" (optional). 
  * #property array headers Default additional headers to send in email, key=value. (default=[])
+ * #property array blacklist Email blacklist addresses or rules. (default=[])
  * 
  * @var array
  * 
@@ -1031,6 +1276,7 @@ $config->wireMail = array(
 	'from' => '', 
 	'fromName' => '', 
 	'headers' => array(), 
+	'blacklist' => array()
 );
 
 /**
@@ -1084,8 +1330,23 @@ $config->pageEdit = array(
  */
 $config->pageAdd = array(
 	'noSuggestTemplates' => '', 
-); 
+);
 
+/**
+ * MarkupQA (markup quality assurance) optional settings
+ * 
+ * This is used by Textarea Fieldtype when enabled and using content-type HTML.
+ *
+ * #property array ignorePaths Paths that begin with any of these will be ignored and left alone (not abstracted), i.e. [ '/a/b/', '/c/d/' ]
+ * #property bool debug Show debugging info to superusers? (default=false). May also be specified in $config->debugMarkupQA.
+ * 
+ * @var array
+ * 
+ */
+$config->markupQA = array(
+	// 'ignorePaths' => [ "/some/path/", "/another/path/", "/and/so/on/" ],
+	// 'debug' => true,
+);
 
 /*** 9. MISC ************************************************************************************/
 
@@ -1149,7 +1410,16 @@ $config->adminEmail = '';
  * @var string
  * 
  */
-$config->fatalErrorHTML = "<p style='background:crimson;color:white;padding:0.5em;font-family:sans-serif;'><b>{message}</b><br /><br /><small>{why}</small></p>";
+$config->fatalErrorHTML = "<p style='background:crimson;color:white;padding:1em;font-family:sans-serif;font-size:16px;line-height:20px;clear:both'>{message}<br /><br /><small>{why}</small></p>";
+
+/**
+ * HTTP code to send for fatal error (typically 500 or 503)
+ * 
+ * @var int
+ * @since 3.0.151
+ * 
+ */
+$config->fatalErrorCode = 500;
 
 /**
  * Settings for modal windows
@@ -1250,11 +1520,138 @@ $config->lazyPageChunkSize = 250;
  * Uncomment and paste into /site/config.php if you want to use this
  * 
  * $config->InputfieldWrapper = array(
- *	'useDependencies' => true,
- * 	'requiredLabel' => 'Missing required value', 
+ *   'useDependencies' => true,
+ *   'requiredLabel' => 'Missing required value', 
+ *   'columnWidthSpacing' => 0, 
  *	);
  * 
  */
+
+/**
+ * statusFiles: Optional automatic include files when ProcessWire reaches each status/state
+ *
+ * **Using status/state files:**
+ *
+ * - These files must be located in your /site/ directory, i.e. /site/ready.php.
+ * - If a file does not exist, PW will see that and ignore it.
+ * - For any state/status files that you don’t need, it is preferable to make them
+ *   blank or remove them, so that PW does not have to check if the file exists.
+ * - It is also preferable that included files have the ProcessWire namespace, and it is
+ *   required that a `boot` file (if used) have the Processwire namespace.
+ * - The `init` and `ready` status files are called *after* autoload modules have had their
+ *   corresponding methods (init or ready) called. Use `_init` or `_ready` (with leading
+ *   underscore) as the keys to specify files that should instead be called *before* the state.
+ * - While php files in /site/ are blocked from direct access by the .htaccess file, it’s 
+ *   also a good idea to add `if(!defined("PROCESSWIRE")) die();` at the top of them. 
+ * 
+ * **Status files and available API variables:**
+ *
+ * - Included files receive current available ProcessWire API variables, locally scoped.
+ * - In the `boot` state, only $wire, $hooks, $config, $classLoader API variables are available.
+ * - In the `init` state, all core API variables are available, except for $page.
+ * - In the `ready`, `render`, `download` and `finished` states, all API variables are available.
+ * - In the `failed` state, an unknown set of API variables is available, so use isset() to check.
+ *
+ * **Description of statuses/states:**
+ *
+ * The statuses occur in this order:
+ *
+ * 1. The `boot` status occurs in the ProcessWire class constructor, after PW has initialized its
+ *    class loader, loaded its config files, and initialized its hooks system. One use for this
+ *    state is to add static hooks to methods that might be executed between boot and init, which
+ *    would be missed by the time the init state is reached.
+ *
+ * 2. The `init` status occurs after ProcessWire has loaded all of its core API variables, except
+ *    that the $page API variable has not yet been determined. At this point, all of the autoload
+ *    modules have had their init() methods called as well.
+ * 
+ *    - If you want to target the state right before modules.init() methods are called, (rather
+ *      than after), you can use `initBefore`.
+ *
+ * 3. The `ready` status is similar to the init status except that the current Page is now known,
+ *    and the $page API variable is known and available. The ready file is included after autoload
+ *    modules have had their ready() methods called. 
+ * 
+ *    - If you want to limit your ready file to just be called for front-end (site) requests,
+ *      you can use `readySite`.
+ * 
+ *    - If you want to limit your ready file to just be called for back-end (admin) requests with
+ *      a logged-in user, you can use `readyAdmin`.
+ * 
+ *    - If you want to target the state right before modules.ready() methods are called, (rather 
+ *      than after), you can use `readyBefore`. This is the same as the init state, except that
+ *      the current $page is available. 
+ *
+ * 4. The `render` status occurs when a page is about to be rendered and the status is retained
+ *    until the page has finished rendering. If using a status file for this, in addition to API
+ *    variables, it will also receive a `$contentType` variable that contains the matched content-
+ *    type header, or it may be blank for text/html content-type, or if not yet known. If externally
+ *    bootstrapped it will contain the value “external”.
+ *
+ * 5. The `download` status occurs when a file is about to be sent as a download to the user.
+ *    It occurs *instead* of a render status (rather than in addition to). If using an include file
+ *    for this, in addition to API vars, it will also receive a `$downloadFile` variable containing
+ *    the filename requested to be downloaded (string).
+ *
+ * 6. The `finished` status occurs after the request has been delivered and output sent. ProcessWire
+ *    performs various maintenance tasks during this state.
+ *
+ * 7. The `failed` status occurs when the request has failed due an Exception being thrown.
+ *    In addition to available API vars, it also receives these variables:
+ *    
+ *    - `$exception` (\Exception): The Exception that triggered the failed status, this is most 
+ *       commonly going to be a Wire404Exception, WirePermissionException or WireException.
+ *    - `$reason` (string): Additional text info about error, beyond $exception->getMessage(). 
+ *    - `$failPage` (Page|NullPage): Page where the error occurred
+ * 
+ * **Defining status files:**
+ *
+ * You can define all of the status files at once using an array like the one this documentation
+ * is for, but chances are you want to set one or two rather than all of them. You can do so like
+ * this, after creating /site/boot.php and site/failed.php files (as examples):
+ * ~~~~~
+ * $config->statusFiles('boot', 'boot.php');
+ * $config->statusFiles('failed', 'failed.php');
+ * ~~~~~
+ *
+ * @since 3.0.142
+ * @var array
+ * 
+ * #property string boot File to include for 'boot' state.
+ * #property string init File to include for 'init' state.
+ * #property string initBefore File to include right before 'init' state, before modules.init().
+ * #property string ready File to include for API 'ready' state.
+ * #property string readyBefore File to include right before 'ready'state, before modules.ready().
+ * #property string readySite File to include for 'ready' state on front-end/site only.
+ * #property string readyAdmin File to include for 'ready' state on back-end/admin only. 
+ * #property string download File to include for API 'download' state (sending file to user).
+ * #property string render File to include for the 'render' state (always called before).
+ * #property string finished File to include for the 'finished' state.
+ * #property string failed File to include for the 'failed' state.
+ *
+ */
+$config->statusFiles = array(
+	'boot' => '',
+	'initBefore' => '',
+	'init' => 'init.php',
+	'readyBefore' => '',
+	'ready' => 'ready.php',
+	'readySite' => '',
+	'readyAdmin' => '',
+	'render' => '',
+	'download' => '',
+	'finished' => 'finished.php',
+	'failed' => '',
+);
+
+/**
+ * adminTemplates: Names of templates that ProcessWire should consider exclusive to the admin
+ *
+ * @since 3.0.142
+ * @var array
+ * 
+ */
+$config->adminTemplates = array('admin');
 
 
 /*** 10. RUNTIME ********************************************************************************
@@ -1288,6 +1685,20 @@ $config->modal = false;
 $config->external = false;
 
 /**
+ * status: Current runtime status (corresponding to ProcessWire::status* constants)
+ *
+ */
+$config->status = 0;
+
+/**
+ * admin: TRUE when current request is for a logged-in user in the admin, FALSE when not, 0 when not yet known
+ * 
+ * @since 3.0.142
+ *
+ */
+$config->admin = 0;
+
+/**
  * cli: This is automatically set to TRUE when PW is booted as a command line (non HTTP) script.
  *
  */
@@ -1299,7 +1710,6 @@ $config->cli = false;
  */
 $config->version = '';
 
-
 /**
  * versionName: This is automatically populated with the current PW version name (i.e. 2.5.0 dev)
  *
@@ -1310,11 +1720,21 @@ $config->versionName = '';
  * column width spacing for inputfields: used by some admin themes to communicate to InputfieldWrapper
  * 
  * Value is null, 0, or 1 or higher. This should be kept at null in this file. 
+ * 
+ * This can also be specified with $config->InputfieldWrapper('columnWidthSpacing', 0); (3.0.158+)
  *
  */
-$config->inputfieldColumnWidthSpacing = null; 
+$config->inputfieldColumnWidthSpacing = null;
 
-
+/**
+ * Populated to contain <link rel='next|prev'.../> tags for document head
+ * 
+ * This is populated only after a MarkupPagerNav::render() has rendered pagination and is
+ * otherwise null. 
+ *
+ * $config->pagerHeadTags = '';
+ * 
+ */
 
 /*** 11. SYSTEM *********************************************************************************
  * 

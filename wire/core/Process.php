@@ -13,7 +13,7 @@
  * Please be sure to see the `Module` interface for full details on methods you can specify in a Process module. 
  * #pw-body
  * 
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
  * 
  * This file is licensed under the MIT license
@@ -23,14 +23,15 @@
  * @method Process headline(string $headline)
  * @method Process browserTitle(string $title)
  * @method Process breadcrumb(string $href, string $label)
- * @method install()
- * @method uninstall()
- * @method upgrade($fromVersion, $toVersion)
+ * @method void install()
+ * @method void uninstall()
+ * @method void upgrade($fromVersion, $toVersion)
  * @method Page installPage($name = '', $parent = null, $title = '', $template = 'admin', $extras = array()) #pw-internal
  * @method int uninstallPage() #pw-internal
- * @method string executeNavJSON(array $options = array()) #pw-internal @todo
- * @method ready()
- * @method setConfigData(array $data)
+ * @method string|array executeNavJSON(array $options = array()) #pw-internal @todo
+ * @method void ready()
+ * @method void setConfigData(array $data)
+ * @method void executed($methodName) Hook called after a method has been executed in the Process
  *
  */
 
@@ -107,7 +108,11 @@ abstract class Process extends WireData implements Module {
 	 * 
 	 */
 	private $_viewVars = array();
-	
+
+	/**
+	 * Construct
+	 * 
+	 */
 	public function __construct() { }
 
 	/**
@@ -149,6 +154,19 @@ abstract class Process extends WireData implements Module {
 	 * 
 	 */
 	public function ___executed($method) { }
+
+	/*
+	 * Add this method to your Process module if you want a catch-all fallback 
+	 * 
+	 * It should check $input->urlSegment1 for the method that was requested.
+	 * This is commented out here since it is not used by Process modules unless manually added.
+	 * 
+	 * @since 3.0.133
+	 * @return string|array
+	 * 
+	public function ___executeUnknown() {
+	}
+	*/
 
 	/**
 	 * Get a value stored in this Process
@@ -310,6 +328,9 @@ abstract class Process extends WireData implements Module {
 	 */
 	public function ___upgrade($fromVersion, $toVersion) {
 		// any code needed to upgrade between versions
+		if($fromVersion && $toVersion && false === true) {
+			throw new WireException('Uncallable exception for phpdoc');
+		}
 	}
 
 	/**
@@ -338,15 +359,19 @@ abstract class Process extends WireData implements Module {
 		$name = $this->wire('sanitizer')->pageName($name);
 		if(!strlen($name)) $name = strtolower(preg_replace('/([A-Z])/', '-$1', str_replace('Process', '', $this->className()))); 
 		$adminPage = $this->wire('pages')->get($this->wire('config')->adminRootPageID); 
-		if($parent instanceof Page) $parent = $parent; // nice
-			else if(ctype_digit("$parent")) $parent = $this->wire('pages')->get((int) $parent); 
-			else if(strpos($parent, '/') !== false) $parent = $this->wire('pages')->get($parent); 
-			else if($parent) $parent = $adminPage->child("include=all, name=" . $this->wire('sanitizer')->pageName($parent)); 
+		if($parent instanceof Page) {
+			// already have what we  need
+		} else if(ctype_digit("$parent")) {
+			$parent = $this->wire('pages')->get((int) $parent);
+		} else if(strpos($parent, '/') !== false) {
+			$parent = $this->wire('pages')->get($parent);
+		} else if($parent) {
+			$parent = $adminPage->child("include=all, name=" . $this->wire('sanitizer')->pageName($parent));
+		}
 		if(!$parent || !$parent->id) $parent = $adminPage; // default
 		$page = $parent->child("include=all, name=$name"); // does it already exist?
-		if($page->id && $page->process == $this) return $page; // return existing copy
-		$page = $this->wire('pages')->newPage();
-		$page->template = $template ? $template : 'admin';
+		if($page->id && "$page->process" == "$this") return $page; // return existing copy
+		$page = $this->wire('pages')->newPage($template ? $template : 'admin');
 		$page->name = $name; 
 		$page->parent = $parent; 
 		$page->process = $this;
@@ -375,7 +400,7 @@ abstract class Process extends WireData implements Module {
 		if(!$moduleID) return 0;
 		$n = 0; 
 		foreach($this->wire('pages')->find("process=$moduleID, include=all") as $page) {
-			if($page->process != $this) continue; 
+			if("$page->process" != "$this") continue; 
 			$page->process = null;
 			$this->message(sprintf($this->_('Trashed Page: %s'), $page->path)); 
 			$this->wire('pages')->trash($page);
@@ -394,7 +419,7 @@ abstract class Process extends WireData implements Module {
 	 * #pw-internal @todo work on documenting this method further
 	 * 
 	 * @param array $options For descending classes to modify behavior (see $defaults in method)
-	 * @return string rendered JSON string
+	 * @return string|array rendered JSON string or array if `getArray` option is true. 
 	 * @throws Wire404Exception if getModuleInfo() doesn't specify useNavJSON=true;
 	 * 
 	 */
@@ -417,7 +442,9 @@ abstract class Process extends WireData implements Module {
 		
 		$options = array_merge($defaults, $options); 
 		$moduleInfo = $this->modules->getModuleInfo($this); 
-		if(empty($moduleInfo['useNavJSON'])) throw new Wire404Exception();
+		if(empty($moduleInfo['useNavJSON'])) {
+			throw new Wire404Exception('No JSON nav available', Wire404Exception::codeSecondary);
+		}
 		
 		$page = $this->wire('page');
 		$data = array(
@@ -557,5 +584,20 @@ abstract class Process extends WireData implements Module {
 	 */
 	public function getViewVars() {
 		return $this->_viewVars; 
+	}
+
+	/**
+	 * Return the Page that this process lives on 
+	 * 
+	 * @return Page|NullPage
+	 * 
+	 */
+	public function getProcessPage() {
+		$page = $this->wire('page'); 
+		if($page->process === $this) return $page;
+		$moduleID = $this->wire('modules')->getModuleID($this);
+		if(!$moduleID) return new NullPage();
+		$page = $this->wire('pages')->get("process=$moduleID, include=all"); 
+		return $page;
 	}
 }

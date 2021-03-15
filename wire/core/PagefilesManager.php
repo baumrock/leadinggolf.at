@@ -57,6 +57,12 @@ class PagefilesManager extends Wire {
 	const extendedDirName = '0/';
 
 	/**
+	 * Name of file that maintains the last modification time independent of directory (LATER/FUTURE)
+	 * 
+	const metaFileName = '.pw';
+	 */
+
+	/**
 	 * Reference to the Page object this PagefilesManager is managing
 	 * 
 	 * @var Page
@@ -87,6 +93,7 @@ class PagefilesManager extends Wire {
 	 *
 	 */
 	public function __construct(Page $page) {
+		$page->wire($this);
 		$this->init($page); 
 	}
 
@@ -231,6 +238,40 @@ class PagefilesManager extends Wire {
 	}
 
 	/**
+	 * Copy/import files from given path into the page’s files directory
+	 * 
+	 * #pw-group-manipulation
+	 * 
+	 * @param string $fromPath Path to copy/import files from. 
+	 * @param bool $move Move files into directory rather than copy?
+	 * @return int Number of files/directories copied.
+	 * @since 3.0.114
+	 * 
+	 */
+	public function importFiles($fromPath, $move = false) {
+		return $this->_copyFiles($fromPath, $this->path(), $move); 
+	}
+
+	/**
+	 * Replace all page’s files with those from given path
+	 * 
+	 * #pw-group-manipulation
+	 * 
+	 * @param string $fromPath
+	 * @param bool $move Move files to destination rather than copy? (default=false)
+	 * @return int Number of files/directories copied.
+	 * @throws WireException if given a path that does not exist.
+	 * @since 3.0.114
+	 * 
+	 * 
+	 */
+	public function replaceFiles($fromPath, $move = false) {
+		if(!is_dir($fromPath)) throw new WireException("Path does not exist: $fromPath"); 
+		$this->emptyPath();
+		return $this->_copyFiles($fromPath, $this->path(), $move);
+	}
+
+	/**
 	 * Recursively move all files managed by this PagefilesManager into a new path.
 	 * 
 	 * #pw-group-manipulation
@@ -284,16 +325,16 @@ class PagefilesManager extends Wire {
 		$errors = 0;
 		if($recursive) {
 			// clear out path and everything below it
-			if(!wireRmdir($path, true)) $errors++;
+			if(!$this->wire('files')->rmdir($path, true, true)) $errors++;
 			if(!$rmdir) $this->_createPath($path); 
 		} else {
 			// only clear out files in path
 			foreach(new \DirectoryIterator($path) as $file) {
 				if($file->isDot() || $file->isDir()) continue; 
-				if(!unlink($file->getPathname())) $errors++;
+				if(!$this->wire('files')->unlink($file->getPathname(), true)) $errors++;
 			}
 			if($rmdir) {
-				@rmdir($path); // will not be successful if other dirs within it
+				$this->wire('files')->rmdir($path, false, true); // will not be successful if other dirs within it
 			}
 		}
 		return $errors === 0;
@@ -449,6 +490,8 @@ class PagefilesManager extends Wire {
 		if(!$dir) return false; 
 		$has = false; 
 		while(!$has && ($f = readdir($dir)) !== false) $has = $f !== '..' && $f !== '.';
+		closedir($dir);
+		// while(!$has && ($f = readdir($dir)) !== false) $has = $f !== '..' && $f !== '.' && !$f !== self::metaFileName;
 		return $has; 
 	}
 
@@ -477,7 +520,19 @@ class PagefilesManager extends Wire {
 			$publicPath = $path . $page->id . '/';
 			$securePath = $path . $securePrefix . $page->id . '/';
 		}
+		/* @todo 3.0.150:
+		$filesPublic = true;
+		if(!$page->isPublic()) {
+			// page not publicly viewable to all, check if files are public or not
+			if($config->pagefileSecure) {
+				$filesPublic = false;
+			} else if($page->template && $page->template->pagefileSecure) {
+				$filesPublic = false; // 3.0.150+
+			}
+		}
 
+		if($filesPublic) {
+		*/
 		if($page->isPublic() || !$config->pagefileSecure) {
 			// use the public path, renaming a secure path to public if it exists
 			if(is_dir($securePath) && !is_dir($publicPath)) {
@@ -564,8 +619,7 @@ class PagefilesManager extends Wire {
 				if(!$key) continue; // first item, likely a filename, skip it
 				break; // not first item means end of ID sequence
 			}
-			$id = ltrim($part, '0'); // remove leading 0 and dash
-			$pageID = $id . $pageID; 
+			$pageID = $part  . $pageID; 
 		}
 
 		return (int) $pageID; 
@@ -590,5 +644,48 @@ class PagefilesManager extends Wire {
 		// if(is_null($wtd)) $wtd = $this->wire(new WireTempDir($this->className() . $this->page->id));
 		// return $wtd->get();
 	}
-	
+
+	/**
+	 * Have this page’s files had modifications since last isModified(true) call? (FUTURE USE)
+	 *
+	 * Please note the following:
+	 *
+	 * - This only takes into account files in the actual directory and not subdirectories unless
+	 *   the $recursive option is true.
+	 *
+	 * - This method always returns true the first time it has been called on a given path.
+	 *
+	 * @param bool $reset Reset to current time if modified? Ensures future calls return false until modified again. (default=false)
+	 * @param bool $recursive Descend into directories (max 1 level)? (default=false)
+	 * @param string $path Path to check if not default, primarily for internal recursive use. (default='')
+	 * @return bool True if files in directory have been modified since last reset, or false if not
+	 *
+	public function isModified($reset = false, $recursive = false, $path = '') {
+		$files = $this->wire('files');
+		$path = empty($path) ? $this->path() : $files->unixDirName($path);
+		$file = $path . self::metaFileName;
+		if(!file_exists($file)) {
+			touch($file);
+			$files->chmod($file);
+			$isModified = true;
+		} else {
+			$fileTime = filemtime($file);
+			$pathTime = filemtime($path);
+			$isModified = $pathTime > $fileTime;
+			if($isModified && $reset) touch($file);
+		}
+		if($recursive && !$isModified) {
+			$dirs = array();
+			foreach(new \DirectoryIterator($path) as $item) {
+				if($item->isDot() || !$item->isDir()) continue;
+				$dirs[] = $item->getPathname();
+			}
+			foreach($dirs as $dir) {
+				$isModified = $this->isModified($reset, false, $dir);
+				if($isModified) break;
+			}
+		}
+		return $isModified;
+	}
+	 */
 }

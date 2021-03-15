@@ -31,8 +31,11 @@ require_once(PROCESSWIRE_CORE_PATH . "Selector.php");
  * @link https://processwire.com/api/selectors/ Official Selectors Documentation
  * @method Selector[] getIterator()
  * 
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
+ * 
+ * @todo Move static helper methods to dedicated API var/class so this class can be more focused
+ * @todo Determine whether Selector array handling methods would be better in separate/descending class
  *
  */
 
@@ -95,7 +98,7 @@ class Selectors extends WireArray {
 		'[' => ']',
 		'{' => '}',
 		'(' => ')',
-		);
+	);
 	
 	/**
 	 * Given a selector string, extract it into one or more corresponding Selector objects, iterable in this object.
@@ -104,6 +107,7 @@ class Selectors extends WireArray {
 	 *
 	 */
 	public function __construct($selector = null) {
+		parent::__construct();
 		if(!is_null($selector)) $this->init($selector);
 	}
 
@@ -184,172 +188,6 @@ class Selectors extends WireArray {
 	}
 
 	/**
-	 * Add a Selector type that processes a specific operator
-	 *
-	 * Static since there may be multiple instances of this Selectors class at runtime. 
-	 * See Selector.php 
-	 * 
-	 * #pw-internal
-	 *
-	 * @param string $operator
-	 * @param string $class
-	 *
-	 */
-	static public function addType($operator, $class) {
-		self::$selectorTypes[$operator] = $class; 
-		for($n = 0; $n < strlen($operator); $n++) {
-			$c = $operator[$n]; 
-			self::$operatorChars[$c] = $c; 
-		}
-	}
-
-	/**
-	 * Return array of all valid operator characters
-	 * 
-	 * #pw-group-static-helpers
-	 * 
-	 * @return array
-	 *
-	 */
-	static public function getOperatorChars() {
-		return self::$operatorChars; 
-	}
-
-	/**
-	 * Does the given string have an operator in it? 
-	 * 
-	 * #pw-group-static-helpers
-	 *
-	 * @param string $str
-	 * @return bool
-	 *
-	 */
-	static public function stringHasOperator($str) {
-		
-		
-		static $letters = 'abcdefghijklmnopqrstuvwxyz';
-		static $digits = '_0123456789';
-		
-		$has = false;
-		
-		foreach(self::$selectorTypes as $operator => $unused) {
-			
-			if($operator == '&') continue; // this operator is too common in other contexts
-			
-			$pos = strpos($str, $operator); 
-			if(!$pos) continue; // if pos is 0 or false, move onto the next
-			
-			// possible match: confirm that field name precedes an operator
-			// if(preg_match('/\b[_a-zA-Z0-9]+' . preg_quote($operator) . '/', $str)) {
-			
-			$c = $str[$pos-1]; // letter before the operator
-			
-			if(stripos($letters, $c) !== false) {
-				// if a letter appears as the character before operator, then we're good
-				$has = true; 
-				
-			} else if(strpos($digits, $c) !== false) {
-				// if a digit appears as the character before operator, we need to confirm there is at least one letter
-				// as there can't be a field named 123, for example, which would mean the operator is likely something 
-				// to do with math equations, which we would refuse as a valid selector operator
-				$n = $pos-1; 	
-				while($n > 0) {
-					$c = $str[--$n];
-					if(stripos($letters, $c) !== false) {
-						// if found a letter, then we've got something valid
-						$has = true; 
-						break;
-						
-					} else if(strpos($digits, $c) === false) {
-						// if we've got a non-digit (and non-letter) then definitely not valid
-						break;
-					}
-				} 
-			}
-			
-			if($has) break;
-		}
-		
-		return $has; 
-	}
-
-	/**
-	 * Is the give string a Selector string?
-	 *
-	 * #pw-group-static-helpers
-	 *
-	 * @param string $str String to check for selector(s)
-	 * @return bool
-	 *
-	 */
-	static public function stringHasSelector($str) {
-		
-		if(!self::stringHasOperator($str)) return false;
-		
-		$has = false;
-		$alphabet = 'abcdefghijklmnopqrstuvwxyz';
-	
-		// replace characters that are allowed but aren't useful here
-		if(strpos($str, '=(') !== false) $str = str_replace('=(', '=1,', $str);
-		$str = str_replace(array('!', '(', ')', '@', '.', '|', '_'), '', trim(strtolower($str)));
-	
-		// flatten sub-selectors
-		$pos = strpos($str, '[');
-		if($pos && strrpos($str, ']') > $pos) {
-			$str = str_replace(array(']', '=[', '<[', '>['), array('', '=1,', '<2,', '>3,'), $str);
-		}
-		$str = rtrim($str, ", ");
-		
-		// first character must match alphabet
-		if(strpos($alphabet, substr($str, 0, 1)) === false) return false;
-		
-		$operatorChars = implode('', self::getOperatorChars());
-		
-		if(strpos($str, ',')) {
-			// split the string into all key=value components and check each individually
-			$inQuote = '';
-			$cLast = '';
-			// replace comments in quoted values so that they aren't considered selector boundaries
-			for($n = 0; $n < strlen($str); $n++) {
-				$c = $str[$n];
-				if($c === ',') {
-					// commas in quoted values are replaced with semicolons
-					if($inQuote) $str[$n] = ';';
-				} else if(($c === '"' || $c === "'") && $cLast != "\\") {
-					if($inQuote && $inQuote === $c) {
-						$inQuote = ''; // end quote
-					} else if(!$inQuote) {
-						$inQuote = $c; // start quote
-					}
-				}
-				$cLast = $c;
-			}
-			$parts = explode(',', $str);
-		} else {
-			// outside of verbose mode, only the first apparent selector is checked
-			$parts = array($str);
-		}
-		
-		// check each key=value component
-		foreach($parts as $part) {
-			$has = preg_match('/^[a-z][a-z0-9]*([' . $operatorChars . ']+)(.*)$/', trim($part), $matches);
-			if($has) {
-				$operator = $matches[1];
-				$value = $matches[2];
-				if(!isset(self::$selectorTypes[$operator])) {
-					$has = false;
-				} else if(self::stringHasOperator($value) && $value[0] != '"' && $value[0] != "'") {
-					// operators not allowed in values unless quoted
-					$has = false;
-				}
-			}
-			if(!$has) break;
-		}
-		
-		return $has;
-	}
-
-	/**
 	 * Create a new Selector object from a field name, operator, and value
 	 * 
 	 * This is mostly for internal use, as the Selectors object already does this when you pass it
@@ -359,7 +197,7 @@ class Selectors extends WireArray {
 	 *
 	 * @param string $field Field name or names (separated by a pipe)
 	 * @param string $operator Operator, i.e. "="
-	 * @param string $value Value or values (separated by a pipe)
+	 * @param string|array $value Value or values (separated by a pipe)
 	 * @return Selector Returns the correct type of `Selector` object that corresponds to the given `$operator`.
 	 * @throws WireException
 	 *
@@ -375,6 +213,7 @@ class Selectors extends WireArray {
 			} else {
 				if(is_array($value)) $value = implode('|', $value);
 				$debug = $this->wire('config')->debug ? "field='$field', value='$value', selector: '$this->selectorStr'" : "";
+				if(empty($operator)) $operator = '[empty]';
 				throw new WireException("Unknown Selector operator: '$operator' -- was your selector value properly escaped? $debug");
 			}
 		}
@@ -383,7 +222,6 @@ class Selectors extends WireArray {
 		if($not) $selector->not = true;
 		return $selector; 		
 	}
-
 
 	/**
 	 * Given a selector string, populate to Selector objects in this Selectors instance
@@ -403,10 +241,11 @@ class Selectors extends WireArray {
 			}
 			$group = $this->extractGroup($str); 	
 			$field = $this->extractField($str); 
-			$operator = $this->extractOperator($str, self::getOperatorChars());
+			$operators = $this->extractOperators($str);
+			$operator = array_shift($operators);
 			$value = $this->extractValue($str, $quote); 
 
-			if($this->parseVars && $quote == '[' && $this->valueHasVar($value)) {
+			if($this->parseVars && $quote === '[' && $this->valueHasVar($value)) {
 				// parse an API variable property to a string value
 				$v = $this->parseValue($value); 
 				if($v !== null) {
@@ -420,6 +259,7 @@ class Selectors extends WireArray {
 				if(!is_null($group)) $selector->group = $group; 
 				if($quote) $selector->quote = $quote; 
 				if($not) $selector->not = true; 
+				if(count($operators)) $selector->altOperators = $operators;
 				$this->add($selector); 
 			}
 		}
@@ -485,17 +325,93 @@ class Selectors extends WireArray {
 	 * @param string $str
 	 * @param array $operatorChars
 	 * @return string
+	 * @deprecated Replaced by extractOperators()
+	 * @todo this method can be removed once confirmed nothing else uses it
 	 *
 	 */
 	protected function extractOperator(&$str, array $operatorChars) {
 		$n = 0;
 		$operator = '';
+		$lastOperator = '';
 		while(isset($str[$n]) && in_array($str[$n], $operatorChars) && $n < self::maxOperatorLength) {
 			$operator .= $str[$n]; 
+			if(self::isOperator($operator)) {
+				$lastOperator = $operator;
+			} else if($lastOperator) {
+				$operator = $lastOperator;
+				break;
+			}
 			$n++; 
 		}
 		if($operator) $str = substr($str, $n); 
 		return $operator; 
+	}
+	
+	/**
+	 * Given a string starting with an operator, return that operator, and remove it from $str.
+	 *
+	 * @param string $str
+	 * @return array
+	 *
+	 */
+	protected function extractOperators(&$str) {
+		
+		$n = 0;
+		$not = false;
+		$operator = '';
+		$lastOperator = '';
+		$operators = array();
+		$operatorChars = self::getOperatorChars();
+	
+		while(isset($str[$n]) && isset($operatorChars[$str[$n]])) {
+			$c = $str[$n];
+			if($operator === '!' && $c !== '=') {
+				// beginning of operator negation that’s not "!="
+				$not = true;
+				$operator = ltrim($operator, '!');
+			}
+			$operator .= $c;
+			if(self::isOperator($operator)) {
+				$lastOperator = $operator;
+			} else if($lastOperator) {
+				if($not) $lastOperator = "!$lastOperator";
+				$operators[$lastOperator] = $lastOperator;
+				$lastOperator = '';
+				$operator = $c;
+				$not = false;
+			}
+			$n++; 
+		}
+		
+		if($lastOperator) {
+			if($not) $lastOperator = "!$lastOperator";
+			$operators[$lastOperator] = $lastOperator;
+		}
+		
+		if(count($operators)) {
+			$str = substr($str, $n);
+		}
+		
+		if($operator && !isset($operators[$lastOperator])) {
+			// leftover characters in $operator, maybe from operator in wrong order
+			$fail = true;
+			if(!count($operators)) {
+				// check if operator has a typo we can fix
+				// isOperator with 2nd argument true allows for and corrects some order mixups
+				$op = self::isOperator($operator, true);
+				if($op) {
+					if($not) $op = "!$op";
+					$operators[$op] = $op;
+					$str = substr($str, $n);
+					$fail = false;
+				}
+			}
+			if($fail) {
+				throw new WireException("Unrecognized operator: $operator"); 
+			}
+		}
+		
+		return $operators;
 	}
 
 	/**
@@ -611,6 +527,7 @@ class Selectors extends WireArray {
 		$value = '';
 		$lastc = '';
 		$quoteDepth = 0;
+		$inDoubleQuote = false; // applies only if openingQuote is populated and not itself a double quote
 
 		do {
 			if(!isset($str[$n])) break;
@@ -620,10 +537,11 @@ class Selectors extends WireArray {
 			if($openingQuote) {
 				// we are in a quoted value string
 
-				if($c == $closingQuote) { // reference closing quote
+				if($c === $closingQuote && !$inDoubleQuote) { 
+					// closing quote for previously opened quote
 					
-					if($lastc != '\\') {
-						// same quote that opened, and not escaped
+					if($lastc !== '\\') {
+						// same quote that opened, and not escaped or double quoted
 						// means the end of the value
 						
 						if($quoteDepth > 0) {
@@ -636,14 +554,39 @@ class Selectors extends WireArray {
 						}
 
 					} else {
-						// this is an intentionally escaped quote
-						// so remove the escape
+						// this is an intentionally escaped quote, remove the escape
 						$value = rtrim($value, '\\'); 
 					}
 					
-				} else if($c == $openingQuote && $openingQuote != $closingQuote) {
+				} else if($c === $openingQuote && $openingQuote !== $closingQuote) {
 					// another opening quote of the same type encountered while already in a quote
-					$quoteDepth++;
+					if(!$inDoubleQuote) $quoteDepth++;
+					
+				} else if($c === '"') {
+					// double quote char 
+					// not reachable if openingQuote was a double quote
+					if($inDoubleQuote) {
+						// closing a previously opened double quote
+						$inDoubleQuote = false;
+					} else {
+						// potentially applicable double quote
+						list($on, $op) = array($n, '', '');
+						// check if an operator came before the quote
+						while($on > 0 && isset(self::$operatorChars[$str[--$on]])) {
+							$op = self::$operatorChars[$str[$on]] . $op;
+						}
+						// if something valid does prefix the operator, cancel the operator
+						if(!$on || !$this->wire('sanitizer')->fieldName($str[$on])) $op = '';
+						// if an operator came before the quote, and it closes somewhere,
+						// we will allow the embedded double quote
+						if(strlen($op) && self::isOperator($op) && strrpos($str, '"') > $n) {
+							// opening a double quote after an operator
+							$inDoubleQuote = true;
+						} else {
+							// abandon the double quote
+							$c = null;
+						}
+					}
 				}
 
 			} else {
@@ -662,10 +605,14 @@ class Selectors extends WireArray {
 				}
 			}
 
-			$value .= $c; 
-			$lastc = $c;
+			if($c !== null) {
+				$value .= $c;
+				$lastc = $c;
+			}
 
 		} while(++$n);
+		
+		if($inDoubleQuote) $value .= '"'; // close double quote
 		
 		$len = strlen("$value");
 		if($len) {
@@ -834,21 +781,30 @@ class Selectors extends WireArray {
 			}
 			if(!$selector->matches($value)) {
 				$matches = false;
-				break;
+				// attempt any alternate operators, if present
+				foreach($selector->altOperators as $altOperator) {
+					$altSelector = self::getSelectorByOperator($altOperator); 
+					if(!$altSelector) continue;
+					$this->wire($altSelector);
+					$selector->copyTo($altSelector);
+					$matches = $altSelector->matches($value);
+					if($matches) break;
+				}
+				// if neither selector nor altSelectors match then stop
+				if(!$matches) break;
 			}
 		}
 		
 		return $matches;
 	}
 
-	public function __toString() {
-		$str = '';
-		foreach($this as $selector) {
-			$str .= $selector->str . ", "; 	
-		}
-		return rtrim($str, ", "); 
-	}
-	
+	/**
+	 * Return string indicating given data type for use in selector arrays
+	 * 
+	 * @param int|string|array $data
+	 * @return string
+	 * 
+	 */
 	protected function getSelectorArrayType($data) {
 		$dataType = '';
 		if(is_int($data)) {
@@ -861,27 +817,35 @@ class Selectors extends WireArray {
 		} 
 		return $dataType;	
 	}
-	
-	protected function getOperatorFromField(&$field) {
-		$operator = '=';
+
+	/**
+	 * Extract and return operator from end of field name, as used by selector arrays
+	 * 
+	 * @param string $field
+	 * @return array
+	 * 
+	 */
+	protected function getOperatorsFromField(&$field) {
+		
 		$operators = array_keys(self::$selectorTypes);
 		$operatorsStr = implode('', $operators);
-		$op = substr($field, -1);
-		if(strpos($operatorsStr, $op) !== false) {
-			// extract operator from $field
+		$c = substr($field, -1);
+		if(ctype_alnum($c)) return array('=');
+
+		$op = '';
+		while(strpos($operatorsStr, $c) !== false && strlen($field)) {
+			$op = $c . $op;
 			$field = substr($field, 0, -1);
-			$op2 = substr($field, -1);
-			if(strpos($operatorsStr, $op2) !== false) {
-				$field = substr($field, 0, -1);
-				$op = $op2 . $op;
-			}
-			$operator = $op;
-			$field = trim($field);
+			$c = substr($field, -1); 
 		}
-		return $operator;
+		
+		if(empty($op)) return array('='); 
+		
+		$operators = $this->extractOperators($op);
+		
+		return $operators;
 	}
 
-	
 	/**
 	 * Create this Selectors object from an array
 	 * 
@@ -914,6 +878,7 @@ class Selectors extends WireArray {
 				foreach($data as $k => $v) {
 					$s = $this->makeSelectorArrayItem($k, $v);
 					$selector1 = $this->create($s['field'], $s['operator'], $s['value']);
+					if(!empty($s['altOperators'])) $selector1->altOperators = $s['altOperators'];
 					$selector2 = $this->create("or$groupCnt", "=", $selector1);
 					$selector2->quote = '(';
 					$this->add($selector2);
@@ -939,6 +904,7 @@ class Selectors extends WireArray {
 				if($s['not']) $selector->not = true;
 				if($s['group']) $selector->group = $s['group'];
 				if($s['quote']) $selector->quote = $s['quote'];
+				if(!empty($s['altOperators'])) $selector->altOperators = $s['altOperators'];
 				
 				$this->add($selector);
 			}
@@ -961,7 +927,7 @@ class Selectors extends WireArray {
 		$sanitize = 'selectorValue';
 		$fields = array();
 		$values = array();
-		$operator = '=';
+		$operators = array('=');
 		$whitelist = null;
 		$not = false;
 		$group = '';
@@ -998,7 +964,7 @@ class Selectors extends WireArray {
 			if(isset($data['sanitizer']) && !isset($data['sanitize'])) $data['sanitize'] = $data['sanitizer']; // allow alternate
 			if(isset($data['sanitize'])) $sanitize = $sanitizer->fieldName($data['sanitize']);
 
-			if(!empty($data['operator'])) $operator = $data['operator'];
+			if(!empty($data['operator'])) $operators = $this->extractOperators($data['operator']);
 			if(!empty($data['not'])) $not = (bool) $data['not'];
 
 			// may use either 'group' or 'or' to specify or-group
@@ -1033,7 +999,7 @@ class Selectors extends WireArray {
 			// Non-verbose selector, where $key is the field name and $data is the value
 			// The $key field name may have an optional operator appended to it
 		
-			$operator = $this->getOperatorFromField($key);
+			$operators = $this->getOperatorsFromField($key);
 			$_fields = strpos($key, '|') ? explode('|', $key) : array($key);
 			$_values = is_array($data) ? $data : array($data);
 			
@@ -1048,6 +1014,7 @@ class Selectors extends WireArray {
 			
 			if(count($data) == 4) {
 				list($field, $operator, $value, $_sanitize) = $data;
+				$operators = $this->extractOperators($operator); 
 				if(is_array($_sanitize)) {
 					$whitelist = $_sanitize;
 				} else {
@@ -1056,10 +1023,11 @@ class Selectors extends WireArray {
 
 			} else if(count($data) == 3) {
 				list($field, $operator, $value) = $data;
+				$operators = $this->extractOperators($operator);
 				
 			} else if(count($data) == 2) {
 				list($field, $value) = $data;
-				$operator = $this->getOperatorFromField($field);
+				$operators = $this->getOperatorsFromField($field);
 			}
 		
 			if(is_array($field)) {
@@ -1075,8 +1043,10 @@ class Selectors extends WireArray {
 		}
 	
 		// make sure operator is valid
-		if(!isset(self::$selectorTypes[$operator])) {
-			throw new WireException("Unrecognized selector operator '$operator'");
+		foreach($operators as $operator) {
+			if(!isset(self::$selectorTypes[$operator])) {
+				throw new WireException("Unrecognized selector operator '$operator'");
+			}
 		}
 	
 		// determine field(s)
@@ -1110,7 +1080,7 @@ class Selectors extends WireArray {
 			$_sanitize = $sanitize;
 			if(is_array($value)) $value = 'array'; // we don't allow arrays here
 			if(is_object($value)) $value = (string) $value;
-			if(is_int($value) || ctype_digit($value)) {
+			if(is_int($value) || (ctype_digit("$value") && strpos($value, '0') !== 0)) {
 				$value = (int) $value;
 				if($_sanitize == 'selectorValue') $_sanitize = ''; // no need to sanitize integer to string
 			}
@@ -1139,73 +1109,12 @@ class Selectors extends WireArray {
 		return array(
 			'field' => count($fields) > 1 ? $fields : reset($fields), 
 			'value' => count($values) > 1 ? $values : reset($values), 
-			'operator' => $operator, 
+			'operator' => array_shift($operators), 
+			'altOperators' => $operators,
 			'not' => $not,
 			'group' => $group,
 			'quote' => $quote, 
 		);
-	}
-
-	/**
-	 * Simple "a=b, c=d" selector-style string conversion to associative array, for fast/simple needs
-	 * 
-	 * - The only supported operator is "=". 
-	 * - Each key=value statement should be separated by a comma. 
-	 * - Do not use quoted values. 
-	 * - If you need a literal comma, use a double comma ",,".
-	 * - If you need a literal equals, use a double equals "==". 
-	 * 
-	 * #pw-group-static-helpers
-	 * 
-	 * @param string $s
-	 * @return array
-	 * 
-	 */
-	public static function keyValueStringToArray($s) {
-		
-		if(strpos($s, '~~COMMA') !== false) $s = str_replace('~~COMMA', '', $s); 
-		if(strpos($s, '~~EQUAL') !== false) $s = str_replace('~~EQUAL', '', $s); 
-		
-		$hasEscaped = false;
-		
-		if(strpos($s, ',,') !== false) {
-			$s = str_replace(',,', '~~COMMA', $s);
-			$hasEscaped = true; 
-		}
-		if(strpos($s, '==') !== false) {
-			$s = str_replace('==', '~~EQUAL', $s);
-			$hasEscaped = true; 
-		}
-		
-		$a = array();	
-		$parts = explode(',', $s); 
-		foreach($parts as $part) {
-			if(!strpos($part, '=')) continue;
-			list($key, $value) = explode('=', $part); 
-			if($hasEscaped) $value = str_replace(array('~~COMMA', '~~EQUAL'), array(',', '='), $value); 
-			$a[trim($key)] = trim($value); 	
-		}
-		
-		return $a; 
-	}
-
-	/**
-	 * Given an assoc array, convert to a key=value selector-style string
-	 * 
-	 * #pw-group-static-helpers
-	 * 
-	 * @param $a
-	 * @return string
-	 * 
-	 */
-	public static function arrayToKeyValueString($a) {
-		$s = '';
-		foreach($a as $key => $value) {
-			if(strpos($value, ',') !== false) $value = str_replace(array(',,', ','), ',,', $value); 
-			if(strpos($value, '=') !== false) $value = str_replace('=', '==', $value); 
-			$s .= "$key=$value, ";
-		}
-		return rtrim($s, ", "); 
 	}
 
 	/**
@@ -1250,27 +1159,508 @@ class Selectors extends WireArray {
 	}
 
 	/**
-	 * See if the given $selector specifies the given $field somewhere
-	 * 
-	 * @param array|string|Selectors $selector
-	 * @param string $field
-	 * @return bool
-	 * 
-	public static function selectorHasField($selector, $field) {
+	 * Get the first selector that uses given field name AND has the given value
+	 *
+	 * Using **$or:** By default this excludes selectors that have fields or values in an OR expression, like "a|b|c".
+	 * So if you specified field "a" it would not be matched. If you wanted it to still match, specify true
+	 * for the $or argument.
+	 *
+	 * Using **$all:** By default only the first matching selector is returned. If you want it to return all
+	 * matching selectors in an array, then specify true for the $all argument. This changes the return value
+	 * to always be an array of Selector objects, or a blank array if no match.
+	 *
+	 * @param string $fieldName Name of field to match
+	 * @param string|int $value Value that must match
+	 * @param bool $or Allow fields and values that appear in OR expressions? (default=false)
+	 * @param bool $all Return an array of all matching Selector objects? (default=false)
+	 * @return Selector|array|null Returns null if field not present in selectors (or blank array if $all mode)
+	 * @since 3.0.142
+	 *
+	 */
+	public function getSelectorByFieldValue($fieldName, $value, $or = false, $all = false) {
 		
-		if(is_object($selector)) $selector = (string) $selector;
+		$selectors = $this->getSelectorByField($fieldName, $or, true); 
+		$matches = array();
 		
-		if(is_array($selector)) {
-			if(array_key_exists($field, $selector)) return true;
-			$test = print_r($selector, true);
-			if(strpos($test, $field) === false) return false; 
-			
-			
-		} else if(is_string($selector)) {
-			if(strpos($selector, $field) === false) return false; // quick exit
+		foreach($selectors as $sel) {
+			/** @var Selector $sel */
+			if($or) {
+				if(in_array($value, $sel->values())) $matches[] = $sel;
+			} else {
+				if($sel->value() == $value) $matches[] = $sel;
+			}
+			if(!$all && count($matches)) break;
+		}
+		
+		if($all) return $matches;
+		
+		return count($matches) ? $matches[0] : null;
+	}
+
+	/**
+	 * Value when typecast as string
+	 * 
+	 * @return string
+	 * 
+	 */
+	public function __toString() {
+		$str = '';
+		foreach($this as $selector) {
+			$str .= $selector->str . ", ";
+		}
+		return rtrim($str, ", ");
+	}
+
+	/**
+	 * Debug info
+	 * 
+	 * @return array
+	 * 
+	 */
+	public function __debugInfo() {
+		$info = parent::__debugInfo();
+		$info['string'] = $this->__toString();
+		return $info;
+	}
+
+	/**
+	 * Debug info for Selector item
+	 * 
+	 * @param Selector|mixed $item
+	 * @return array|mixed|null|string
+	 * 
+	 */
+	public function debugInfoItem($item) {
+		if($item instanceof Selector) return $item->__debugInfo();
+		return parent::debugInfoItem($item);
+	}
+
+	/*** STATIC HELPERS *******************************************************************************/
+	
+	/**
+	 * Add a Selector type that processes a specific operator
+	 *
+	 * Static since there may be multiple instances of this Selectors class at runtime.
+	 * See Selector.php
+	 *
+	 * #pw-internal
+	 *
+	 * @param string $operator
+	 * @param string $class
+	 *
+	 */
+	static public function addType($operator, $class) {
+		self::$selectorTypes[$operator] = $class;
+		for($n = 0; $n < strlen($operator); $n++) {
+			$c = $operator[$n];
+			self::$operatorChars[$c] = $c;
 		}
 	}
+
+	/**
+	 * Get all operators allowed by selectors
+	 *
+	 * #pw-group-static-helpers
+	 *
+	 * @param array $options
+	 *  - `operator` (string): Return info for only this operator. When specified, only value is returned (default='').
+	 *  - `compareType` (int): Return only operators matching given `Selector::compareType*` constant (default=0).
+	 *  - `getIndexType` (string): Index type to use in returned array: 'operator', 'className', 'class', or 'none' (default='class')
+	 *  - `getValueType` (string): Value type to use in returned array: 'operator', 'class', 'className', 'label', 'description', 'compareType', 'verbose' (default='operator').
+	 *     If 'verbose' option used then assoc array returned for each operator containing 'class', 'className', 'operator', 'compareType', 'label', 'description'.
+	 * @return array|string|int Returned array where both keys and values are operators (or values are requested 'valueType' option)
+	 *   If 'operator' option specified, return value is string, int or array (requested 'valueType'), and there is no indexType.
+	 * @since 3.0.154
+	 *
 	 */
+	static public function getOperators(array $options = array()) {
+
+		$defaults = array(
+			'operator' => '',
+			'getIndexType' => 'class',
+			'getValueType' => 'operator',
+			'compareType' => 0,
+		);
+
+		$options = array_merge($defaults, $options);
+		$operators = array();
+		$compareType = (int) $options['compareType'];
+		$indexType = $options['getIndexType'];
+		$valueType = $options['getValueType'];
+		$selectorTypes = self::$selectorTypes;
+
+		if(!empty($options['operator'])) {
+			$operator = $options['operator'];
+			if($operator[0] === '!' && $operator !== '!=') {
+				// negated operator
+				$operator = ltrim($operator, '!');
+			}
+			if(!isset($selectorTypes[$operator])) {
+				// operator does not exist
+				if($valueType === 'compareType') return 0;
+				return $valueType === 'verbose' ? array() : '';
+			}
+			$selectorTypes = array($operator => $selectorTypes[$operator]);
+		}
+
+		foreach($selectorTypes as $operator => $typeName) {
+			$className = __NAMESPACE__ . "\\$typeName";
+			if($compareType) {
+				/** @var Selector $className */
+				if(!($className::getCompareType() & $options['compareType'])) continue;
+			}
+			if($valueType === 'class') {
+				$value = $typeName;
+			} else if($valueType === 'className') {
+				$value = $className;
+			} else if($valueType === 'label') {
+				$value = $className::getLabel();
+			} else if($valueType === 'description') {
+				$value = $className::getDescription();
+			} else if($valueType === 'compareType') {
+				$value = $className::getCompareType();
+			} else if($valueType === 'verbose') {
+				$value = array(
+					'operator' => $operator,
+					'class' => $typeName,
+					'className' => $className,
+					'compareType' => $className::getCompareType(),
+					'label' => $className::getLabel(),
+					'description' => $className::getDescription(), 
+				);
+			} else {
+				$value = $operator;
+			}
+			if($indexType === 'none') {
+				$key = '';
+			} else if($indexType === 'class') {
+				$key = $typeName;
+			} else if($indexType === 'className') {
+				$key = $className;
+			} else {
+				$key = $operator;
+			}
+			if($key === '') {
+				$operators[] = $value;
+			} else {
+				$operators[$key] = $value;
+			}
+		}
+
+		if(!empty($options['operator'])) return reset($operators);
+
+		return $operators;
+	}
+
+	/**
+	 * Return array of all valid operator characters
+	 *
+	 * #pw-group-static-helpers
+	 *
+	 * @return array
+	 *
+	 */
+	static public function getOperatorChars() {
+		return self::$operatorChars;
+	}
+
+	/**
+	 * Return array of other characters that have meaning in a selector outside of operators
+	 *
+	 * #pw-group-static-helpers
+	 *
+	 * @return array
+	 * @since 3.0.156
+	 *
+	 */
+	static public function getReservedChars() {
+		return array(
+			'or' => '|', // title|body=foo, summary=bar|baz
+			'not' => '!', // !body*=suchi tobiko
+			'separator' => ',', // foo=bar, bar=baz
+			'match-same-1' => '@', // @foo.bar=123, @foo.baz=456
+			'quote-value' => '"', // foo="bar"
+			'or-group-open' => '(', // id>0, (title=foo), (body=bar)
+			'or-group-close' => ')',
+			'sub-selector-open' => '[', // foo=[bar>0, baz%=text]
+			'sub-selector-close' => ']',
+			'api-var-open' => '[', // [page], [page.id], [user.id], etc. 
+			'api-var-close' => ']',
+		);
+	}
+
+	/**
+	 * Return a string indicating the type of operator that it is, or false if not an operator
+	 *
+	 * #pw-group-static-helpers
+	 *
+	 * @param string $operator Operator to check
+	 * @param bool $is Change return value to just boolean true or false.
+	 * @return bool|string
+	 * @since 3.0.108
+	 *
+	 */
+	static public function getOperatorType($operator, $is = false) {
+		if(!isset(self::$selectorTypes[$operator])) return false;
+		$type = self::$selectorTypes[$operator];
+		// now double check that we can map it back, in case PHP filters anything in the isset()
+		$op = array_search($type, self::$selectorTypes);
+		if($op === $operator) {
+			if($is) return true;
+			// Convert types like "SelectorEquals" to "Equals"
+			if(strpos($type, 'Selector') === 0) list(,$type) = explode('Selector', $type, 2);
+			return $type;
+		}
+		return false;
+	}
+
+	/**
+	 * Given an operator, return Selector instance (or other requested Selector property)
+	 *
+	 * When getting a Selector instance, be sure to populate its `field` and `value` properties after retrieving it.
+	 *
+	 * #pw-group-static-helpers
+	 *
+	 * @param string $operator Operator to get Selector instance for
+	 * @param string $property One of 'instance,', 'label', 'compareType', 'class', 'className' (default='instance')
+	 * @return Selector|int|string|false Returns false if operator or property not recognized
+	 * @since 3.0.160
+	 *
+	 */
+	static public function getSelectorByOperator($operator, $property = 'instance') {
+		if(!isset(self::$selectorTypes[$operator])) return false;
+		$typeName = self::$selectorTypes[$operator];
+		/** @var Selector $className */
+		$className = __NAMESPACE__ . "\\$typeName";
+		if($property === 'instance' || $property === '') return new $className('', null);
+		if($property === 'compareType') return $className::getCompareType();
+		if($property === 'className') return $className;
+		if($property === 'label') return $className::getLabel();
+		if($property === 'class') return $typeName;
+		return false;
+	}
+
+	/**
+	 * Returns true if given string is a recognized operator, or false if not
+	 *
+	 * #pw-group-static-helpers
+	 *
+	 * @param string $operator
+	 * @param bool $returnOperator Return the operator rather than bool? When true, corrects minor typos, like mixed up
+	 *   order, returning correct found operator string if possible, false otherwise. Added 3.0.162. (default=false)
+	 * @return bool|string
+	 * @since 3.0.108
+	 *
+	 */
+	static public function isOperator($operator, $returnOperator = false) {
+		$is = self::getOperatorType($operator, true);
+		if(!$returnOperator || strlen($operator) < 3) return $is;
+		if($is) return $operator;
+		$op = strrev(trim($operator, '=')) . '=';
+		return self::getOperatorType($op, true) ? $op : false;
+	}
+
+	/**
+	 * Does the given string have an operator in it?
+	 *
+	 * #pw-group-static-helpers
+	 *
+	 * @param string $str String that might contain an operator
+	 * @param bool $getOperator Specify true to return the operator that was found, or false if not (since 3.0.108)
+	 * @return bool
+	 *
+	 */
+	static public function stringHasOperator($str, $getOperator = false) {
+
+		static $letters = 'abcdefghijklmnopqrstuvwxyz';
+		static $digits = '_0123456789';
+
+		$has = false;
+
+		foreach(self::$selectorTypes as $operator => $unused) {
+
+			if($operator == '&') continue; // this operator is too common in other contexts
+
+			$pos = strpos($str, $operator);
+			if(!$pos) continue; // if pos is 0 or false, move onto the next
+
+			// possible match: confirm that field name precedes an operator
+			// if(preg_match('/\b[_a-zA-Z0-9]+' . preg_quote($operator) . '/', $str)) {
+
+			$c = $str[$pos-1]; // letter before the operator
+
+			if(stripos($letters, $c) !== false) {
+				// if a letter appears as the character before operator, then we're good
+				$has = true;
+
+			} else if(strpos($digits, $c) !== false) {
+				// if a digit appears as the character before operator, we need to confirm there is at least one letter
+				// as there can't be a field named 123, for example, which would mean the operator is likely something 
+				// to do with math equations, which we would refuse as a valid selector operator
+				$n = $pos-1;
+				while($n > 0) {
+					$c = $str[--$n];
+					if(stripos($letters, $c) !== false) {
+						// if found a letter, then we've got something valid
+						$has = true;
+						break;
+
+					} else if(strpos($digits, $c) === false) {
+						// if we've got a non-digit (and non-letter) then definitely not valid
+						break;
+					}
+				}
+			}
+
+			if($has) {
+				if($getOperator) $getOperator = $operator;
+				break;
+			}
+		}
+
+		if($has && $getOperator) return $getOperator;
+
+		return $has;
+	}
+
+	/**
+	 * Is the given string a Selector string?
+	 *
+	 * #pw-group-static-helpers
+	 *
+	 * @param string $str String to check for selector(s)
+	 * @return bool
+	 *
+	 */
+	static public function stringHasSelector($str) {
+
+		if(!self::stringHasOperator($str)) return false;
+
+		$has = false;
+		$alphabet = 'abcdefghijklmnopqrstuvwxyz';
+
+		// replace characters that are allowed but aren't useful here
+		if(strpos($str, '=(') !== false) $str = str_replace('=(', '=1,', $str);
+		$str = str_replace(array('!', '(', ')', '@', '.', '|', '_'), '', trim(strtolower($str)));
+
+		// flatten sub-selectors
+		$pos = strpos($str, '[');
+		if($pos && strrpos($str, ']') > $pos) {
+			$str = str_replace(array(']', '=[', '<[', '>['), array('', '=1,', '<2,', '>3,'), $str);
+		}
+		$str = rtrim($str, ", ");
+
+		// first character must match alphabet
+		if(strpos($alphabet, substr($str, 0, 1)) === false) return false;
+
+		$operatorChars = implode('', self::getOperatorChars());
+
+		if(strpos($str, ',')) {
+			// split the string into all key=value components and check each individually
+			$inQuote = '';
+			$cLast = '';
+			// replace comments in quoted values so that they aren't considered selector boundaries
+			for($n = 0; $n < strlen($str); $n++) {
+				$c = $str[$n];
+				if($c === ',') {
+					// commas in quoted values are replaced with semicolons
+					if($inQuote) $str[$n] = ';';
+				} else if(($c === '"' || $c === "'") && $cLast != "\\") {
+					if($inQuote && $inQuote === $c) {
+						$inQuote = ''; // end quote
+					} else if(!$inQuote) {
+						$inQuote = $c; // start quote
+					}
+				}
+				$cLast = $c;
+			}
+			$parts = explode(',', $str);
+		} else {
+			// outside of verbose mode, only the first apparent selector is checked
+			$parts = array($str);
+		}
+
+		// check each key=value component
+		foreach($parts as $part) {
+			$has = preg_match('/^[a-z][a-z0-9]*([' . $operatorChars . ']+)(.*)$/', trim($part), $matches);
+			if($has) {
+				$operator = $matches[1];
+				$value = $matches[2];
+				if(!isset(self::$selectorTypes[$operator])) {
+					$has = false;
+				} else if(self::stringHasOperator($value) && $value[0] != '"' && $value[0] != "'") {
+					// operators not allowed in values unless quoted
+					$has = false;
+				}
+			}
+			if(!$has) break;
+		}
+
+		return $has;
+	}
+
+	/**
+	 * Simple "a=b, c=d" selector-style string conversion to associative array, for fast/simple needs
+	 *
+	 * - The only supported operator is "=".
+	 * - Each key=value statement should be separated by a comma.
+	 * - Do not use quoted values.
+	 * - If you need a literal comma, use a double comma ",,".
+	 * - If you need a literal equals, use a double equals "==".
+	 *
+	 * #pw-group-static-helpers
+	 *
+	 * @param string $s
+	 * @return array
+	 *
+	 */
+	public static function keyValueStringToArray($s) {
+
+		if(strpos($s, '~~COMMA') !== false) $s = str_replace('~~COMMA', '', $s);
+		if(strpos($s, '~~EQUAL') !== false) $s = str_replace('~~EQUAL', '', $s);
+
+		$hasEscaped = false;
+
+		if(strpos($s, ',,') !== false) {
+			$s = str_replace(',,', '~~COMMA', $s);
+			$hasEscaped = true;
+		}
+		if(strpos($s, '==') !== false) {
+			$s = str_replace('==', '~~EQUAL', $s);
+			$hasEscaped = true;
+		}
+
+		$a = array();
+		$parts = explode(',', $s);
+		foreach($parts as $part) {
+			if(!strpos($part, '=')) continue;
+			list($key, $value) = explode('=', $part);
+			if($hasEscaped) $value = str_replace(array('~~COMMA', '~~EQUAL'), array(',', '='), $value);
+			$a[trim($key)] = trim($value);
+		}
+
+		return $a;
+	}
+
+	/**
+	 * Given an assoc array, convert to a key=value selector-style string
+	 *
+	 * #pw-group-static-helpers
+	 *
+	 * @param array $a
+	 * @return string
+	 *
+	 */
+	public static function arrayToKeyValueString($a) {
+		$s = '';
+		foreach($a as $key => $value) {
+			if(strpos($value, ',') !== false) $value = str_replace(array(',,', ','), ',,', $value);
+			if(strpos($value, '=') !== false) $value = str_replace('=', '==', $value);
+			$s .= "$key=$value, ";
+		}
+		return rtrim($s, ", ");
+	}
+
 
 }
 

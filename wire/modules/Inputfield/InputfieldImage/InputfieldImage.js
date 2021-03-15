@@ -28,7 +28,7 @@ function InputfieldImage($) {
 	var cookieData = null;
 	
 	// grid items to retry for sizing by setGridSize() methods	
-	var retryGridItems = [];
+	var retryGridItems = []; // i.e. [ { item: $item, gridSize: 123 } ]
 
 	// true when the grid is being resized with the slider
 	var gridSliding = false;
@@ -208,7 +208,8 @@ function InputfieldImage($) {
 		if(checked) {
 			$items.prop("checked", "checked").change();
 		} else {
-			$items.removeAttr("checked").change();
+			// $items.removeAttr("checked").change(); // JQM
+			$items.prop("checked", false).change();
 		}
 	}
 
@@ -217,10 +218,11 @@ function InputfieldImage($) {
 	 *
 	 */
 	function updateGrid($inputfield) {
+		var $gridImages;
 		if(typeof $inputfield == "undefined") {
-			var $gridImages = $(".gridImages");
+			$gridImages = $(".gridImages");
 		} else {
-			var $gridImages = $inputfield.find(".gridImages");
+			$gridImages = $inputfield.find(".gridImages");
 		}
 		$gridImages.each(function() {
 			var $grid = $(this),
@@ -237,8 +239,9 @@ function InputfieldImage($) {
 		var narrowItems = [];
 		var mediumItems = [];
 		var wideItems = [];
-		var ni = 0, mi = 0, wi = 0;
+		var n = 0, ni = 0, mi = 0, wi = 0;
 		var $inputfields;
+		var $item;
 	
 		if(typeof $inputfield == "undefined") {
 			$inputfields = $(".InputfieldImage.Inputfield");
@@ -249,7 +252,7 @@ function InputfieldImage($) {
 		$inputfields.removeClass('InputfieldImageNarrow InputfieldImageMedium InputfieldImageWide');
 		
 		$inputfields.each(function() {
-			var $item = $(this);
+			$item = $(this);
 			var width = $item.width();
 			if(width < 1) return;
 			if(width <= 500) {
@@ -264,16 +267,16 @@ function InputfieldImage($) {
 			}
 		});
 		
-		for(var n = 0; n < ni; n++) {
-			var $item = narrowItems[n];	
+		for(n = 0; n < ni; n++) {
+			$item = narrowItems[n];	
 			$item.addClass('InputfieldImageNarrow');
 		}
-		for(var n = 0; n < mi; n++) {
-			var $item = mediumItems[n];
+		for(n = 0; n < mi; n++) {
+			$item = mediumItems[n];
 			$item.addClass('InputfieldImageMedium');
 		}
-		for(var n = 0; n < wi; n++) {
-			var $item = wideItems[n];
+		for(n = 0; n < wi; n++) {
+			$item = wideItems[n];
 			$item.addClass('InputfieldImageWide');
 		}
 	}
@@ -397,7 +400,7 @@ function InputfieldImage($) {
 			if(typeof focusStr == "undefined") {
 				if(focusData !== null) return focusData;
 				var $input = $edit.find('.InputfieldImageFocus');
-				var focusStr = $input.val();
+				focusStr = $input.val();
 			}
 			
 			var a = focusStr.split(' ');
@@ -685,7 +688,7 @@ function InputfieldImage($) {
 	 *
 	 */
 	function getFocusZoomPosition4GridviewSquare(focusPercent, sourceDimPX, gridViewPX, zoomPercent, scale, smallestSidePX) {
-		var sourceDimPX = sourceDimPX * scale;                 // is used to later get the position in pixel
+		sourceDimPX = sourceDimPX * scale;                 // is used to later get the position in pixel
 		var gridViewPercent = gridViewPX / sourceDimPX * 100;  // get percent of the gridViewBox in regard to the current image side size (width|height)
 		var adjustPercent = gridViewPercent / 2;               // is used to calculate position from the circle center point to [left|top] percent
 		var posPercent = focusPercent - adjustPercent;         // get adjusted position in percent
@@ -914,6 +917,10 @@ function InputfieldImage($) {
 
 		$(document).on("click", function(e) {
 			var $el = $(e.target);
+			if(typeof clickLanguageTabActive != "undefined" && clickLanguageTabActive) {
+				// LanguageTabs dblclick event
+				return;
+			}
 
 			if($el.closest(".InputfieldImageEdit").length) {
 				closeEdit(null, $el.parents(".gridImages"));
@@ -1102,13 +1109,13 @@ function InputfieldImage($) {
 		$gridImages.find(".gridImage__edit, .gridImage__resize").css('line-height', size); 
 		$gridImages.attr('data-size', gridSize);
 		setCookieData($inputfield, 'size', gridSize); 
-	
+
 		if(retryGridItems.length) setTimeout(function() {
 			while(retryGridItems.length) {
-				var $item = retryGridItems.pop();
-				setGridSizeItem($item, gridSize, ragged);
+				var item = retryGridItems.pop();
+				setGridSizeItem(item.item, item.gridSize, ragged);
 			}
-		}, 150); 
+		}, 150);
 	}
 
 	/**
@@ -1121,11 +1128,12 @@ function InputfieldImage($) {
 	 * 
 	 */
 	function setGridSizeItem($item, gridSize, ragged, focus) {
+		var $img;
 		
 		if($item.hasClass('gridImage__overflow')) {
-			var $img = $item.children('img');	
+			$img = $item.children('img');	
 		} else if($item.is('img')) {
-			var $img = $item;
+			$img = $item;
 			$item = $img.closest('.gridImage__overflow');
 		} else {
 			return;
@@ -1170,17 +1178,18 @@ function InputfieldImage($) {
 			
 		} else if(zoom > 0 && $item.closest('.InputfieldImageFocusZoom').length && !gridSliding) { 
 			// focus with zoom
+			var maxHeight, maxWidth;
 			if(w >= h) {
-				var maxHeight = '100%';
-				var maxWidth = 'none';
+				maxHeight = '100%';
+				maxWidth = 'none';
 				if(w == dataW) {
 					// scale full dimensions proportionally to gridSize
 					h = gridSize;	
 					w = (h / dataH) * dataW
 				}
 			} else {
-				var maxHeight = 'none';
-				var maxWidth = '100%';
+				maxHeight = 'none';
+				maxWidth = '100%';
 				if(h == dataH) {
 					// scale full dimensions proportionally to gridSize
 					w = gridSize;
@@ -1233,7 +1242,7 @@ function InputfieldImage($) {
 			$img.removeAttr('width').attr('height', gridSize);
 		}
 
-		var w = $img.width();
+		w = $img.width();
 		// if(!w) w = $img.attr('data-w');
 
 		if(w) {
@@ -1253,7 +1262,7 @@ function InputfieldImage($) {
 					height: gridSize + 'px'
 				});
 			} else {
-				retryGridItems.push($item);
+				retryGridItems.push({ item: $item, gridSize: gridSize });
 				$item.attr('data-tries', tries + 1); 
 			}
 		}
@@ -1330,10 +1339,10 @@ function InputfieldImage($) {
 		$grid.click(toggleClick);
 		
 		if($target.hasClass('InputfieldImage')) {
-			$target.find('.InputfieldHeader').append($list).append($left).append($grid);
+			$target.children('.InputfieldHeader').append($list).append($left).append($grid);
 			defaultMode = getCookieData($target, 'mode');
 		} else {
-			$(".InputfieldImage .InputfieldHeader", $target).append($list).append($left).append($grid);
+			$(".InputfieldImage > .InputfieldHeader", $target).append($list).append($left).append($grid);
 		}
 
 		if(defaultMode == 'list') {
@@ -1419,7 +1428,10 @@ function InputfieldImage($) {
 		if(!name.length || typeof value == "undefined") return;
 		if(data[name][property] == value) return; // if already set with same value, exit now
 		data[name][property] = value; 
-		$.cookie('InputfieldImage', data);
+		// $.cookie('InputfieldImage', data);
+		$.cookie('InputfieldImage', data, {
+			secure: (window.location.protocol.indexOf("https:") === 0)
+		});
 		cookieData = data;
 		//console.log('setCookieData(' + property + ', ' + value + ')');
 	}
@@ -1441,13 +1453,21 @@ function InputfieldImage($) {
 		var data = cookieData ? cookieData : $.cookie('InputfieldImage');
 		var value = null;	
 
-		if(!data) var data = {};
+		if(!data) data = {};
 	
 		// setup default values
 		if(typeof data[name] == "undefined") data[name] = {};
-		if(typeof data[name].size == "undefined") data[name].size = parseInt($inputfield.find('.gridImages').attr('data-size'));
-		if(typeof data[name].listSize == "undefined") data[name].listSize = 23;
-		if(typeof data[name].mode == "undefined") data[name].mode = $inputfield.find('.gridImages').attr('data-gridMode');
+		if(typeof data[name].size == "undefined" || !data[name].size) {
+			data[name].size = parseInt($inputfield.find('.gridImages').attr('data-size'));
+			if(!data[name].size) data[name].size = 130;
+		}
+		if(typeof data[name].listSize == "undefined" || !data[name].listSize) {
+			data[name].listSize = 23;
+		}
+		if(typeof data[name].mode == "undefined" || !data[name].mode) {
+			data[name].mode = $inputfield.find('.gridImages').attr('data-gridMode');
+			if(!data[name].mode) data[name].mode = 'list';
+		}
 		//if(typeof data[name].ragged == "undefined") data[name].ragged = $inputfield.find('.gridImages').attr('data-ragged') ? true : false;
 		
 		if(cookieData == null) cookieData = data; // cache
@@ -1464,8 +1484,7 @@ function InputfieldImage($) {
 			value = data[name][property];
 		}
 		
-		//console.log('getCookieData(' + property + ') ...');
-		//console.log(value);
+		// console.log(name + ' getCookieData(' + property + '): ' + value);
 		
 		return value;
 	}
@@ -1485,6 +1504,7 @@ function InputfieldImage($) {
 		var size = getCookieData($inputfield, 'size');
 		var mode = getCookieData($inputfield, 'mode');
 		var ragged = mode == 'left' ? true : false;
+		var renderValueMode = $inputfield.hasClass('InputfieldRenderValueMode');
 		
 		if(!size) size = $gridImages.attr('data-gridsize');
 		size = parseInt(size);
@@ -1492,7 +1512,7 @@ function InputfieldImage($) {
 		//console.log('initInputfield');
 		//console.log($inputfield);
 		
-		if($inputfield.hasClass('InputfieldImageEditAll') || mode == 'list') {
+		if(!renderValueMode && ($inputfield.hasClass('InputfieldImageEditAll') || mode == 'list')) {
 			var listSize = getCookieData($inputfield, 'listSize');
 			setListSize($inputfield, listSize);
 		} else {
@@ -1502,7 +1522,7 @@ function InputfieldImage($) {
 		if(!$inputfield.hasClass('InputfieldImageInit')) {
 			$inputfield.addClass('InputfieldImageInit');
 			
-			if($inputfield.hasClass('InputfieldRenderValueMode')) {
+			if(renderValueMode) {
 				return setupMagnificForRenderValue($inputfield);
 
 			} else if(maxFiles == 1) {
@@ -1673,7 +1693,8 @@ function InputfieldImage($) {
 			 */
 			function errorItem(message, filename) {
 				if(typeof filename !== "undefined") message = '<b>' + filename + ':</b> ' + message;
-				return '<li>' + message + '</li>';
+				var icon = "<i class='fa fa-fw fa-warning'></i> ";
+				return '<li>' + icon + message + '</li>';
 			}
 
 			/**
@@ -1960,7 +1981,7 @@ function InputfieldImage($) {
 				function updateProgress(evt) {
 					if(typeof evt != "undefined") {
 						if(!evt.lengthComputable) return;
-						$progressBar.attr("value", parseInt((evt.loaded / evt.total) * 100));
+						$progressBar.val(parseInt((evt.loaded / evt.total) * 100));
 					}
 					$('body').addClass('pw-uploading');
 					$spinner.css('display', 'block');
@@ -1983,6 +2004,7 @@ function InputfieldImage($) {
 						
 						if(r.error) {
 							$errorParent.append(errorItem(r.message));
+							if(n == (response.length-1)) $progressItem.hide();
 							continue;
 						}
 
@@ -2035,6 +2057,13 @@ function InputfieldImage($) {
 							} else {
 								setGridSize($inputfield, size);
 							}
+							setTimeout(function() {
+								var $inputfields = $markup.find('.Inputfield');
+								if($inputfields.length) {
+									InputfieldsInit($markup.find('.Inputfields'));
+									$inputfields.trigger('reloaded', ['InputfieldImageUpload']);
+								}
+							}, 250);
 						}).css("display", "");
 						$markup.addClass('InputfieldFileItemExisting');
 
@@ -2168,7 +2197,12 @@ function InputfieldImage($) {
 					var message;
 
 					if(extensions.indexOf(extension) == -1) {
-						message = extension + ' is a invalid file extension, please use one of:  ' + extensions;
+						if(typeof ProcessWire.config.InputfieldFile.labels['bad-ext'] != "undefined") {
+							message = ProcessWire.config.InputfieldFile.labels['bad-ext'];
+							message = message.replace('EXTENSIONS', extensions);
+						} else {
+							message = extension + ' is a invalid file extension, please use one of:  ' + extensions;
+						}
 						$errorParent.append(errorItem(message, files[i].name));
 
 					} else if(!useClientResize && files[i].size > maxFilesize && maxFilesize > 2000000) {
@@ -2176,8 +2210,12 @@ function InputfieldImage($) {
 						// There might (not sure though) be some issues to get that value so don't want to overvalidate here -apeisa
 						var filesizeKB = toKilobyte(files[i].size),
 							maxFilesizeKB = toKilobyte(maxFilesize);
-
-						message = 'Filesize ' + filesizeKB + ' kb is too big. Maximum allowed is ' + maxFilesizeKB + ' kb';
+						if(typeof ProcessWire.config.InputfieldFile.labels['too-big'] != "undefined") {
+							message = ProcessWire.config.InputfieldFile.labels['too-big'];
+							message = message.replace('MAX_KB', maxFilesizeKB);
+						} else {
+							message = 'Filesize ' + filesizeKB + ' kb is too big. Maximum allowed is ' + maxFilesizeKB + ' kb';
+						}
 						$errorParent.append(errorItem(message, files[i].name));
 						
 					} else if(typeof xhr != "undefined") {
@@ -2282,6 +2320,7 @@ function InputfieldImage($) {
 			initInputfield($inputfield);
 			initUploadHTML5($inputfield);
 			//console.log('InputfieldImage reloaded');
+			Inputfields.init($inputfield);
 		}).on('wiretabclick', function(e, $newTab, $oldTab) {
 			$newTab.find(".InputfieldImage").each(function() {
 				initInputfield($(this));

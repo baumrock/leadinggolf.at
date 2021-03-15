@@ -11,7 +11,7 @@
  *
  * Other user contributions as noted.
  *
- * Copyright (C) 2016 by Horst Nogajski and Ryan Cramer
+ * Copyright (C) 2016-2019 by Horst Nogajski and Ryan Cramer
  * This file licensed under Mozilla Public License v2.0 http://mozilla.org/MPL/2.0/
  * 
  * @method bool resize($targetWidth, $targetHeight = 0)
@@ -56,6 +56,14 @@ class ImageSizer extends Wire {
 	static protected $knownEngines = null;
 
 	/**
+	 * Names of engines that failed the supported() checks
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $failedEngineNames = array();
+
+	/**
 	 * Module/class name of engine that must only be used (for cases where you want to force a specific engine)
 	 * 
 	 * If the $options array contained a 'forceEngine' property, this contains the value.
@@ -84,7 +92,6 @@ class ImageSizer extends Wire {
 	 * 
 	 * @param string $filename Filename to resize. Omit only if instantiating class for a getEngines() call.
 	 * @param array $options Initial options to the engine.
-	 * @throws WireException
 	 *
 	 */
 	public function __construct($filename = '', $options = array()) {
@@ -108,15 +115,21 @@ class ImageSizer extends Wire {
 		self::$knownEngines = array();
 		
 		$modules = $this->wire('modules');
-		$engines = $modules->find("className^=ImageSizerEngine");
+		$engines = $modules->findByPrefix('ImageSizerEngine');
+		$numEngines = count($engines);
 		
-		foreach($engines as $module) {
-			$moduleName = $module->className();
+		foreach($engines as $moduleName) {
 			if(!$modules->isInstalled($moduleName)) continue;
-			if(count($engines) > 1) {
-				$configData = $modules->getModuleConfigData($moduleName);
+			if($numEngines > 1) {
+				$configData = $modules->getConfig($moduleName);
 				$priority = isset($configData['enginePriority']) ? (int) $configData['enginePriority'] : 0;
-				while(isset(self::$knownEngines[$priority])) $priority++;
+				// multiply by 10 to ensure two priority 1 engines don't get mixed up with a priority 2 engine
+				// for instance, two priority 1 engines become 10 and 11, rather than 1 and 2, as a priority 1
+				// engine incremented to 2 could otherwise be confused with a priority 2 engine
+				$priority *= 10;
+				while(isset(self::$knownEngines[$priority])) {
+					$priority++;
+				}
 			} else {
 				$priority = 0;
 			}
@@ -124,8 +137,60 @@ class ImageSizer extends Wire {
 		}
 		
 		if(count(self::$knownEngines) > 1) ksort(self::$knownEngines);
+		self::$knownEngines[] = $this->defaultEngineName;
 		
 		return self::$knownEngines;
+	}
+
+	/**
+	 * Get array of information for all ImageSizer engines (or optionally a specific ImageSizer engine)
+	 * 
+	 * Returns array of arrays indexed by engine name, each with the following: 
+	 * 
+	 *  - `name` (string): engine name
+	 *  - `title` (string): engine title
+	 *  - `class` (string): PHP class name for engine
+	 *  - `summary` (string): Single sentence summary of the engine
+	 *  - `author` (string): Authr name (if available) 
+	 *  - `moduleVersion` (string): Version of the module that powers this engine
+	 *  - `libraryVersion` (string): Version of the library that powers this engine
+	 *  - `sources` (array): Supported formats for source images it reads (i.e. JPG, JPEG, PNG, PNG24, GIF, GIF87, etc.)
+	 *  - `targets` (array): Supported formats for target images it creates (i.e. JPG, PNG, PNG24, WEBP, etc.)
+	 *  - `quality` (int): Current quality setting configured with the engine
+	 *  - `sharpening` (string): Current sharpening setting configured with the engine
+	 *  - `priority` (int): Engine priority (lower is higher priority)
+	 *  - `runOrder` (int): Order ImageSizer will try this engine in relative to others (lower runs first), derived from priority.
+	 * 
+	 * @param string $name Specify engine name to get info just for that engine or omit to get info for all engines (default)
+	 * @return array Array of arrays indexed by engine name, or if $name specified then just array of info for that engine. 
+	 *   Returns empty array on error. 
+	 * @since 3.0.138
+	 * 
+	 */
+	public function getEngineInfo($name = '') {
+		
+		$infos = array();
+		$engineNames = $name ? array($name) : $this->getEngines();
+		$prefix = 'ImageSizerEngine';
+		
+		if($name && stripos($name, $prefix) === 0) {
+			$name = str_replace($prefix, '', $name);
+		}
+		
+		foreach($engineNames as $priority => $engineName) {
+			$shortName = str_replace($prefix, '', $engineName);
+			if($name && $shortName !== $name) continue;
+			$engine = $this->getEngine($engineName);
+			if(!$engine) continue;
+			$info = $engine->getEngineInfo();
+			$info['runOrder'] = $priority;	
+			$infos[$shortName] = $info;
+		}
+	
+		// if one engine requested reduce array to just that engine
+		if($name) $infos = isset($infos[$name]) ? $infos[$name] : array();
+		
+		return $infos;
 	}
 	
 	/**
@@ -152,21 +217,43 @@ class ImageSizer extends Wire {
 		}
 		
 		$engine = null;
+		$bestFallbackEngine = null; // first engine that was supported but failed webp check
+		$engineNames = $this->getEngines();
 	
 		// find first supported engine, according to knownEngines priority
-		foreach($this->getEngines() as $engineName) {
+		foreach($engineNames as $engineName) {
+			
 			if($this->forceEngineName && $engineName != $this->forceEngineName) continue;
-			$e = $this->wire('modules')->get($engineName);
+			
+			$e = $this->getEngine($engineName);
+			if(!$e) continue;
+			
+			/** @var ImageSizerEngine $e */
 			$e->prepare($filename, $options, $inspectionResult);	
-			if($e->supported()) {
+			$supported = $e->supported();
+			
+			if($supported && !empty($options['webpAdd']) && !$e->supported('webp')) {
+				// engine does not support requested webp extra image
+				if(!$bestFallbackEngine) $bestFallbackEngine = $e;
+				
+			} else if($supported) {
+				// found supported engine
 				$engine = $e;
 				break;
-			}
+			} 
+			
+			$this->failedEngineNames[$engineName] = $engineName;
 		}
 		
-		if(!$engine) {
-			// fallback to default
-			$engine = $this->newDefaultImageSizerEngine($filename, $options, $inspectionResult);
+		if(!$engine) { 
+			// no engine found
+			if($bestFallbackEngine) {
+				// if there is a next best fallback, use it
+				$engine = $bestFallbackEngine;
+			} else {
+				// otherwise fallback to default
+				$engine = $this->newDefaultImageSizerEngine($filename, $options, $inspectionResult);
+			}
 		}
 		
 		return $engine;
@@ -294,11 +381,10 @@ class ImageSizer extends Wire {
 	 * 
 	 */
 	public function setModified($modified) {
-		if($this->engine) $this->engine->modified = $modified ? true : false;
+		if($this->engine) $this->engine->setModified($modified ? true : false);
 		return $this;
 	}
 
-	// setters (@todo phpdocs)
 	public function setAutoRotation($value = true) { return $this->setOptions(array('autoRotation', $value)); }
 	public function setCropExtra($value) { return $this->setOptions(array('cropExtra', $value)); }
 	public function setCropping($cropping = true) { return $this->setOptions(array('cropping', $cropping)); }
@@ -312,7 +398,6 @@ class ImageSizer extends Wire {
 	public function setTimeLimit($value = 30) { return $this->setOptions(array('timeLimit', $value)); }
 	public function setUpscaling($value = true) { return $this->setOptions(array('upscaling', $value)); }
 	public function setUseUSM($value = true) { return $this->setOptions(array('useUSM', $value)); }
-
 	public function getWidth() { 
 		$image = $this->getEngine()->get('image');
 		return $image['width']; 
@@ -321,21 +406,34 @@ class ImageSizer extends Wire {
 		$image = $this->getEngine()->get('image');
 		return $image['height']; 
 	}
-	
-	public function getFilename() { return $this->getEngine()->filename; }
-	public function getExtension() { return $this->getEngine()->extension; }
-	public function getImageType() { return $this->getEngine()->imageType; }
-	public function isModified() { return $this->getEngine()->modified; }
+	public function getFilename() { return $this->getEngine()->getFilename(); }
+	public function getExtension() { return $this->getEngine()->getExtension(); }
+	public function getImageType() { return $this->getEngine()->getImageType(); }
+	public function isModified() { return $this->getEngine()->getModified(); }
 	public function getOptions() { return $this->getEngine()->getOptions(); }
+	public function getFailedEngineNames() { return $this->failedEngineNames; }
 
 	/**
 	 * Get the current ImageSizerEngine
 	 * 
-	 * @return ImageSizerEngine
+	 * @param string $engineName Optionally specify a specific engine name to get a new instance of that engine
+	 *   When used, returned engine is in an unprepared state (no filename assigned, etc.). Since 3.0.138.
+	 * @return ImageSizerEngine|null Returns ImageSizerEngine or null only if requested $engineName is not found. 
+	 *   If no $engineName is specified this method may return an existing instance from a previous call. 
 	 * @throws WireException
 	 * 
 	 */
-	public function getEngine() { 
+	public function getEngine($engineName = '') {
+
+		if($engineName) {
+			if($engineName === $this->defaultEngineName) {
+				$engineClass = __NAMESPACE__ . "\\$engineName";
+				$engine = $this->wire(new $engineClass());
+			} else {
+				$engine = $this->wire('modules')->get($engineName);
+			}
+			return $engine;
+		}
 		
 		if($this->engine) return $this->engine;
 		
@@ -533,7 +631,7 @@ class ImageSizer extends Wire {
 		} else {
 			return null;
 		}
-		$sizer = new ImageSizerEngineGD($filename);
+		$sizer = new ImageSizerEngineGD();
 		if($wire) $wire->wire($sizer);
 		$result = false !== $sizer->writeBackIPTC($filename) ? true : false;
 		return $result;

@@ -9,7 +9,7 @@
  * @property bool $isSuperuser
  * @property bool $isEditor
  * @property bool $isLoggedIn
- * @property bool $isModal
+ * @property bool|string $isModal
  * @property bool|int $useAsLogin
  * @method array getUserNavArray()
  *
@@ -61,7 +61,11 @@ abstract class AdminThemeFramework extends AdminTheme {
 	public function __construct() {
 		parent::__construct();
 		$this->set('useAsLogin', false);
+	}
+	
+	public function wired() {
 		$this->sanitizer = $this->wire('sanitizer');
+		parent::wired();
 	}
 
 	/**
@@ -270,6 +274,7 @@ abstract class AdminThemeFramework extends AdminTheme {
 		if($this->isModal === 'inline') $classes[] = 'modal-inline';
 		if($this->wire('input')->urlSegment1) $classes[] =  'hasUrlSegments';
 		if($process) $classes[] = $process->className();
+		if(!$this->isLoggedIn) $classes[] = 'pw-guest';
 
 		return implode(' ', $classes);
 	}
@@ -650,6 +655,7 @@ abstract class AdminThemeFramework extends AdminTheme {
 
 			$text = $notice->text;
 			$allowMarkup = $notice->flags & Notice::allowMarkup;
+			$groupByType = $options['groupByType'] && !($notice->flags & Notice::noGroup) && !($notice instanceof NoticeError); 
 			
 			if($allowMarkup) {
 				// leave $text alone
@@ -657,6 +663,7 @@ abstract class AdminThemeFramework extends AdminTheme {
 				// unencode + re-encode entities, just in case module already entity some or all of output
 				if(strpos($text, '&') !== false) $text = $this->sanitizer->unentities($text);
 				$text = $this->sanitizer->entities($text);
+				$text = nl2br($text);
 			}
 
 			if($notice instanceof NoticeError) {
@@ -693,7 +700,7 @@ abstract class AdminThemeFramework extends AdminTheme {
 				'{text}' => $text,
 			);
 			
-			if($options['groupByType']) {
+			if($groupByType) {
 				if(!isset($noticesArray[$noticeType])) $noticesArray[$noticeType] = array();
 				$noticesArray[$noticeType][] = $replacements;
 			} else {

@@ -17,9 +17,14 @@
  * #pw-summary All database operations in ProcessWire are performed via this PDO-style database class.
  * 
  * @method void unknownColumnError($column) #pw-internal
+ * @property bool $debugMode
  *
  */
 class WireDatabasePDO extends Wire implements WireDatabase {
+
+	const operatorTypeComparison = 0;
+	const operatorTypeBitwise = 1;
+	const operatorTypeAny = 2;
 
 	/**
 	 * Log of all queries performed in this instance
@@ -52,6 +57,8 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	/**
 	 * Instance of PDO
 	 * 
+	 * @var \PDO
+	 * 
 	 */
 	protected $pdo = null;
 
@@ -72,6 +79,52 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	protected $stripMB4 = false;
 
 	/**
+	 * Lowercase value of $config->dbEngine
+	 * 
+	 * @var string
+	 * 
+	 */
+	protected $engine = '';
+
+	/**
+	 * Lowercase value of $config->dbCharset
+	 * 
+	 * @var string
+	 * 
+	 */
+	protected $charset = '';
+
+	/**
+	 * Regular comparison operators 
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $comparisonOperators = array('=', '<', '>', '>=', '<=', '<>', '!=');
+
+	/**
+	 * Bitwise comparison operators
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $bitwiseOperators = array('&', '~', '&~', '|', '^', '<<', '>>');
+
+	/**
+	 * Substitute variable names according to engine as used by getVariable() method
+	 * 
+	 * @var array
+	 * 
+	 */
+	protected $subVars = array(
+		'myisam' => array(),
+		'innodb' => array(
+			'ft_min_word_len' => 'innodb_ft_min_token_size',
+			'ft_max_word_len' => 'innodb_ft_max_token_size',
+		),
+	);
+
+	/**
 	 * PDO connection settings
 	 * 
 	 */
@@ -80,7 +133,7 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 		'user' => '',
 		'pass' => '', 	
 		'options' => '',
-		);
+	);
 
 	/**
 	 * Cached values from getVariable method
@@ -89,6 +142,14 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	 * 
 	 */
 	protected $variableCache = array();
+
+	/**
+	 * Cached InnoDB stopwords (keys are the stopwords and values are irrelevant)
+	 * 
+	 * @var array|null Becomes array once loaded
+	 * 
+	 */
+	protected $stopwordCache = null;
 
 	/**
 	 * Create a new PDO instance from ProcessWire $config API variable
@@ -158,6 +219,7 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	 * 
 	 */
 	public function __construct($dsn, $username = null, $password = null, array $driver_options = array()) {
+		parent::__construct();
 		$this->pdoConfig['dsn'] = $dsn; 
 		$this->pdoConfig['user'] = $username;
 		$this->pdoConfig['pass'] = $password; 
@@ -174,9 +236,19 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	public function _init() {
 		if($this->init || !$this->isWired()) return;
 		$this->init = true; 
-		$config = $this->wire('config');
+		$config = $this->wire()->config;
 		$this->stripMB4 = $config->dbStripMB4 && strtolower($config->dbEngine) != 'utf8mb4';
+		$this->engine = strtolower($config->dbEngine);
+		$this->charset = strtolower($config->dbCharset);
 		$this->queryLogMax = (int) $config->dbQueryLogMax;
+		if($config->debug && $this->pdo) {
+			// custom PDO statement for debug mode
+			$this->debugMode = true;
+			$this->pdo->setAttribute(
+				\PDO::ATTR_STATEMENT_CLASS, 
+				array(__NAMESPACE__ . "\\WireDatabasePDOStatement", array($this))
+			);
+		}
 		$sqlModes = $config->dbSqlModes;
 		if(is_array($sqlModes)) {
 			// ["5.7.0" => "remove:mode1,mode2/add:mode3"]
@@ -329,7 +401,49 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	 * 
 	 */
 	public function inTransaction() {
-		return $this->pdo()->inTransaction();
+		return (bool) $this->pdo()->inTransaction();
+	}
+
+	/**
+	 * Are transactions available with current DB engine (or table)?
+	 * 
+	 * #pw-group-PDO
+	 * 
+	 * @param string $table Optionally specify a table to specifically check to that table
+	 * @return bool
+	 * 
+	 */
+	public function supportsTransaction($table = '') {
+		$engine = '';
+		if($table) {
+			$query = $this->prepare('SHOW TABLE STATUS WHERE name=:name'); 
+			$query->bindValue(':name', $table); 
+			$query->execute();
+			if($query->rowCount()) {
+				$row = $query->fetch(\PDO::FETCH_ASSOC);
+				$engine = empty($row['engine']) ? '' : $row['engine'];
+			}
+			$query->closeCursor();
+		} else {
+			$engine = $this->wire('config')->dbEngine;
+		}
+		return strtoupper($engine) === 'INNODB';
+	}
+
+	/**
+	 * Allow a new transaction to begin right now? (i.e. supported and not already in one)
+	 * 
+	 * Returns combined result of supportsTransaction() === true and inTransaction() === false.
+	 * 
+	 * #pw-group-PDO
+	 * 
+	 * @param string $table Optional table that transaction will be for
+	 * @return bool
+	 * @since 3.0.140
+	 * 
+	 */
+	public function allowTransaction($table = '') {
+		return $this->supportsTransaction($table) && !$this->inTransaction();
 	}
 
 	/**
@@ -372,7 +486,7 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	static public function getQueryLog() {
 		/** @var WireDatabasePDO $database */
 		$database = wire('database');
-		$database->queryLog();
+		return $database->queryLog();
 	}
 
 	/**
@@ -381,9 +495,12 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	 * #pw-group-PDO
 	 * 
 	 * @param string $statement
-	 * @param array|string $driver_options Driver options array or you may specify $note here
+	 * @param array|string|bool $driver_options Optionally specify one of the following: 
+	 *  - Boolean true for WireDatabasePDOStatement rather than PDOStatement (also assumed when debug mode is on) 3.0.162+
+	 *  - Driver options array 
+	 *  - or you may specify the $note argument here
 	 * @param string $note Debug notes to save with query in debug mode
-	 * @return \PDOStatement
+	 * @return \PDOStatement|WireDatabasePDOStatement
 	 * @link http://php.net/manual/en/pdo.prepare.php
 	 * 
 	 */
@@ -391,9 +508,21 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 		if(is_string($driver_options)) {
 			$note = $driver_options; 
 			$driver_options = array();
+		} else if($driver_options === true) {
+			$driver_options = array(
+				\PDO::ATTR_STATEMENT_CLASS => array(__NAMESPACE__ . "\\WireDatabasePDOStatement", array($this))
+			);
 		}
-		if($this->debugMode) $this->queryLog($statement, $note); 
-		return $this->pdo()->prepare($statement, $driver_options);
+		$pdoStatement = $this->pdo()->prepare($statement, $driver_options);
+		if($this->debugMode) {
+			if($pdoStatement instanceof WireDatabasePDOStatement) {
+				/** @var WireDatabasePDOStatement $pdoStatement */
+				$pdoStatement->setDebugNote($note);
+			} else {
+				$this->queryLog($statement, $note);
+			}
+		}
+		return $pdoStatement;
 	}
 
 	/**
@@ -522,26 +651,25 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	 * 
 	 * @param string $sql Query (string) to log
 	 * @param string $note Any additional debugging notes about the query
-	 * @return array|bool Returns query log array, or boolean true if you've logged a query
+	 * @return array|bool|int Returns query log array, boolean true if added, boolean false if not
 	 * 
 	 */
 	public function queryLog($sql = '', $note = '') {
 		if(empty($sql)) return $this->queryLog;
-		if($this->debugMode) {
-			if(count($this->queryLog) > $this->queryLogMax) {
-				if(isset($this->queryLog['error'])) {
-					$qty = (int) $this->queryLog['error'];
-				} else {
-					$qty = 0;
-				}
-				$qty++;
-				$this->queryLog['error'] = "$qty additional queries omitted because \$config->dbQueryLogMax = $this->queryLogMax";
+		if(!$this->debugMode) return false;
+		if(count($this->queryLog) > $this->queryLogMax) {
+			if(isset($this->queryLog['error'])) {
+				$qty = (int) $this->queryLog['error'];
 			} else {
-				$this->queryLog[] = $sql . ($note ? " -- $note" : "");
-				return true;
+				$qty = 0;
 			}
+			$qty++;
+			$this->queryLog['error'] = "$qty additional queries omitted because \$config->dbQueryLogMax = $this->queryLogMax";
+			return false;
+		} else {
+			$this->queryLog[] = $sql . ($note ? " -- $note" : "");
+			return true;
 		}
-		return false;
 	}
 
 	/**
@@ -566,6 +694,76 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	}
 
 	/**
+	 * Does the given table exist in this database?
+	 * 
+	 * #pw-group-custom
+	 * 
+	 * @param string $table
+	 * @return bool
+	 * @since 3.0.133
+	 * 
+	 */
+	public function tableExists($table) {
+		$query = $this->prepare('SHOW TABLES LIKE ?');
+		$query->execute(array($table));
+		$result = $query->fetchColumn();
+		return !empty($result);
+	}
+
+	/**
+	 * Does the given column exist in given table? 
+	 * 
+	 * ~~~~~
+	 * // Standard usage:
+	 * if($database->columnExists('pages', 'name')) {
+	 *   echo "The pages table has a 'name' column";
+	 * }
+	 * 
+	 * // You can also bundle table and column together:
+	 * if($database->columnExists('pages.name')) {
+	 *   echo "The pages table has a 'name' column";
+	 * }
+	 * 
+	 * $exists = $database->columnExists('pages', 'name', true); 
+	 * if($exists) {
+	 *   // associative array with indexes: Name, Type, Null, Key, Default, Extra
+	 *   echo "The pages table has a 'name' column and here is verbose info: ";
+	 *   print_r($exists); 
+	 * }
+	 * ~~~~~
+	 *
+	 * #pw-group-custom
+	 * 
+	 * @param string $table Specify table name (or table and column name in format "table.column").
+	 * @param string $column Specify column name (or omit or blank string if already specified in $table argument). 
+	 * @param bool $getInfo Return array of column info (with type info, etc.) rather than boolean?
+	 * @return bool|array
+	 * @since 3.0.154
+	 * @throws WireDatabaseException
+	 * 
+	 */
+	public function columnExists($table, $column = '', $getInfo = false) {
+		if(empty($column)) {
+			if(!strpos($table, '.')) throw new WireDatabaseException('No column specified');
+			list($table, $column) = explode('.', $table, 2);
+		}
+		$exists = false;
+		$table = $this->escapeTable($table);
+		try {
+			$query = $this->prepare("SHOW COLUMNS FROM `$table` WHERE Field=:column");
+			$query->bindValue(':column', $column, \PDO::PARAM_STR);
+			$query->execute();
+			$numRows = (int) $query->rowCount();
+			if($numRows) $exists = $getInfo ? $query->fetch(\PDO::FETCH_ASSOC) : true;
+			$query->closeCursor();
+		} catch(\Exception $e) {
+			// most likely given table does not exist
+			$exists = false;
+		}
+		return $exists;
+	}
+
+	/**
 	 * Is the given string a database comparison operator?
 	 * 
 	 * #pw-group-custom
@@ -579,11 +777,85 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	 * ~~~~~
 	 *
 	 * @param string $str 1-2 character operator to test
-	 * @return bool True if it's valid, false if not
+	 * @param bool|null|int $operatorType Specify a WireDatabasePDO::operatorType* constant (3.0.162+), or any one of the following (3.0.143+): 
+	 *  - `NULL`: allow all operators (default value if not specified)
+	 *  - `FALSE`: allow only comparison operators
+	 *  - `TRUE`: allow only bitwise operators
+	 * @param bool $get Return the operator rather than true, when valid? (default=false) Added 3.0.162
+	 * @return bool True if valid, false if not
 	 *
 	 */
-	public function isOperator($str) {
-		return in_array($str, array('=', '<', '>', '>=', '<=', '<>', '!=', '&', '~', '&~', '|', '^', '<<', '>>'), true);
+	public function isOperator($str, $operatorType = self::operatorTypeAny, $get = false) {
+		
+		$len = strlen($str);
+		
+		if($len > 2 || $len < 1) return false;
+		
+		if($operatorType === null || $operatorType === self::operatorTypeAny) {
+			// allow all operators
+			$operators = array_merge($this->comparisonOperators, $this->bitwiseOperators); 
+			
+		} else if($operatorType === true || $operatorType === self::operatorTypeBitwise) {
+			// allow only bitwise operators
+			$operators = $this->bitwiseOperators; 
+			
+		} else {
+			// self::operatorTypeComparison
+			$operators = $this->comparisonOperators;
+		}
+	
+		if($get) {
+			$key = array_search($str, $operators, true);
+			return $key === false ? false : $operators[$key];
+		} else {
+			return in_array($str, $operators, true);
+		}
+	}
+
+	/**
+	 * Is given word a fulltext stopword for database engine?
+	 * 
+	 * @param string $word
+	 * @param string $engine DB engine ('myisam' or 'innodb') or omit for current engine
+	 * @return bool
+	 * @since 3.0.160
+	 * 
+	 */
+	public function isStopword($word, $engine = '') {
+		$engine = $engine === '' ? $this->engine : strtolower($engine);
+		if($engine === 'myisam') return DatabaseStopwords::has($word);
+		if($this->stopwordCache === null) $this->getStopwords($engine, true);
+		return isset($this->stopwordCache[strtolower($word)]);
+	}
+
+	/**
+	 * Get all fulltext stopwords for database engine
+	 * 
+	 * @param string $engine Specify DB engine of "myisam" or "innodb" or omit for current DB engine
+	 * @param bool $flip Return flipped array where stopwords are array keys rather than values? for isset() use (default=false)
+	 * @return array
+	 * 
+	 */
+	public function getStopwords($engine = '', $flip = false) {
+		$engine = $engine === '' ? $this->engine : strtolower($engine);
+		if($engine === 'myisam') return DatabaseStopwords::getAll();
+		if($this->stopwordCache === null) { //  && $engine === 'innodb') {
+			$cache = $this->wire()->cache;
+			$stopwords = null;
+			if($cache) {
+				$stopwords = $cache->get('InnoDB.stopwords');
+				if($stopwords) $stopwords = explode(',', $stopwords);
+			}
+			if(!$stopwords) {
+				$query = $this->prepare('SELECT value FROM INFORMATION_SCHEMA.INNODB_FT_DEFAULT_STOPWORD');
+				$query->execute();
+				$stopwords = $query->fetchAll(\PDO::FETCH_COLUMN, 0);
+				$query->closeCursor();
+				if($cache) $cache->save('InnoDB.stopwords', implode(',', $stopwords), WireCache::expireDaily);
+			}
+			$this->stopwordCache = array_flip($stopwords);
+		}
+		return $flip ? $this->stopwordCache : array_keys($this->stopwordCache);
 	}
 
 	/**
@@ -628,6 +900,20 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 		if(strpos($str, '.') === false) return $this->escapeTable($str); 
 		list($table, $col) = explode('.', $str); 
 		return $this->escapeTable($table) . '.' . $this->escapeCol($col);
+	}
+
+	/**
+	 * Sanitize comparison operator
+	 * 
+	 * @param string $operator
+	 * @param bool|int|null $operatorType Specify a WireDatabasePDO::operatorType* constant (default=operatorTypeComparison)
+	 * @param string $default Default/fallback operator to return if given one is not valid (default='=')
+	 * @return string
+	 * 
+	 */
+	public function escapeOperator($operator, $operatorType = self::operatorTypeComparison, $default = '=') {
+		$operator = $this->isOperator($operator, $operatorType, true); 
+		return $operator ? $operator : $default;
 	}
 
 	/**
@@ -707,7 +993,8 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	 * 
 	 */
 	public function __get($key) {
-		if($key == 'pdo') return $this->pdo();
+		if($key === 'pdo') return $this->pdo();
+		if($key === 'debugMode') return $this->debugMode;
 		return parent::__get($key);
 	}
 
@@ -733,11 +1020,13 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	 * #pw-group-custom
 	 * 
 	 * @param string $name Name of MySQL variable you want to retrieve
-	 * @param bool $cache Allow use of cached values?
+	 * @param bool $cache Allow use of cached values? (default=true)
+	 * @param bool $sub Allow substitution of MyISAM variable names to InnoDB equivalents when InnoDB is engine? (default=true)
 	 * @return string|int
 	 * 
 	 */
-	public function getVariable($name, $cache = true) {
+	public function getVariable($name, $cache = true, $sub = true) {
+		if($sub && isset($this->subVars[$this->engine][$name])) $name = $this->subVars[$this->engine][$name]; 
 		if($cache && isset($this->variableCache[$name])) return $this->variableCache[$name];
 		$query = $this->prepare('SHOW VARIABLES WHERE Variable_name=:name');
 		$query->bindValue(':name', $name);
@@ -746,6 +1035,28 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 		list($varName, $value) = $query->fetch(\PDO::FETCH_NUM);
 		$this->variableCache[$name] = $value;
 		return $value;
+	}
+
+	/**
+	 * Get current database engine (lowercase) 
+	 * 
+	 * @return string
+	 * @since 3.0.160
+	 * 
+	 */
+	public function getEngine() {
+		return $this->engine;
+	}
+
+	/**
+	 * Get current database charset (lowercase)
+	 * 
+	 * @return string
+	 * @since 3.0.160
+	 * 
+	 */
+	public function getCharset() {
+		return $this->charset;
 	}
 
 	/**
@@ -786,12 +1097,9 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 	 * 
 	 */
 	public function getMaxIndexLength() {
-		$config = $this->wire('config');
-		$engine = strtolower($config->dbEngine);
-		$charset = strtolower($config->dbCharset);
 		$max = 250; 
-		if($charset == 'utf8mb4') {
-			if($engine == 'innodb') {
+		if($this->charset === 'utf8mb4') {
+			if($this->engine === 'innodb') {
 				$max = 191; 
 			}
 		}
@@ -868,3 +1176,4 @@ class WireDatabasePDO extends Wire implements WireDatabase {
 		return $result;
 	}
 }
+

@@ -13,15 +13,22 @@
  * specifically on managing Page objects. 
  * 
  * PageArray is returned by all API methods in ProcessWire that can return more than one page at once. 
- * `$pages->find()` and `$page->children()` are common examples. 
+ * `$pages->find()` and `$page->children()` are common examples that return PageArray. 
  * 
- * The recommended way to create a new PageArray is to use the `$pages->newPageArray()` method: 
+ * You can create a new PageArray using any of the methods below: 
  * ~~~~~
- * $pageArray = $pages->newPageArray();
+ * // the most common way to create a new PageArray and add a $page to it
+ * $a = new PageArray();
+ * $a->add($page);
+ * 
+ * // ProcessWire 3.0.123+ can also create PageArray like this:
+ * $a = PageArray(); // create blank 
+ * $a = PageArray($page); // create + add one page
+ * $a = PageArray([ $page1, $page2, $page3 ]); // create + add pages
  * ~~~~~
  * #pw-body
  * 
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
  * https://processwire.com
  * 
  * @method string getMarkup($key = null) Render a simple/default markup value for each item #pw-internal
@@ -36,7 +43,7 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	/**
 	 * Reference to the selectors that led to this PageArray, if applicable
 	 *
-	 * @var Selectors
+	 * @var Selectors|string
 	 *
 	 */
 	protected $selectors = null;
@@ -108,6 +115,7 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 */
 	public function getItemKey($item) {
 		if(!$item instanceof Page) return null;	
+		if(!$this->duplicateChecking) return parent::getItemKey($item);
 		
 		// first see if we can determine key from our index
 		$id = $item->id;
@@ -156,6 +164,23 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 */
 	public function makeBlankItem() {
 		return $this->wire('pages')->newPage();
+	}
+	
+	/**
+	 * Creates a new blank instance of this PageArray, for internal use.
+	 *
+	 * #pw-internal
+	 *
+	 * @return PageArray
+	 *
+	 */
+	public function makeNew() {
+		$class = get_class($this);
+		/** @var PageArray $newArray */
+		$newArray = $this->wire(new $class());
+		// $newArray->finderOptions($this->finderOptions());
+		if($this->lazyLoad) $newArray->_lazy(true);
+		return $newArray;
 	}
 
 	/**
@@ -419,12 +444,14 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 * 
 	 * #pw-internal
 	 *
-	 * @param Selectors $selectors
+	 * @param Selectors|string $selectors Option to add as string added in 3.0.142
 	 * @return $this
 	 *
 	 */
-	public function setSelectors(Selectors $selectors) {
-		$this->selectors = $selectors; 
+	public function setSelectors($selectors) {
+		if(is_string($selectors) || $selectors instanceof Selectors || $selectors === null) {
+			$this->selectors = $selectors;
+		}
 		return $this;
 	}
 
@@ -439,11 +466,15 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 * echo $products->getSelectors(); // outputs the selector above
 	 * ~~~~~
 	 * 
-	 * @return Selectors|null Returns Selectors object if available, or null if not. 
+	 * @param bool $getString Specify true to get selector string rather than Selectors object (default=false) added in 3.0.142
+	 * @return Selectors|string|null Returns Selectors object if available, or null if not. Always return string if $getString argument is true. 
 	 *
 	 */
-	public function getSelectors() {
-		return $this->selectors; 
+	public function getSelectors($getString = false) {
+		if($getString) return (string) $this->selectors;
+		if($this->selectors === null) return null;
+		if(is_string($this->selectors)) $this->selectors = $this->wire(new Selectors($this->selectors));
+		return $this->selectors;
 	}
 
 	/**
@@ -452,7 +483,7 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 * This is applicable to and destructive to the WireArray.
 	 *
 	 * @param string|Selectors|array $selectors AttributeSelector string to use as the filter.
-	 * @param bool $not Make this a "not" filter? (default is false)
+	 * @param bool|int $not Make this a "not" filter? Use int 1 for "not all". (default is false)
 	 * @return PageArray|WireArray reference to current [filtered] PageArray
 	 *
 	 */
@@ -488,6 +519,23 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	}
 
 	/**
+	 * Like the base get() method but can only return Page objects (whether Page or NullPage)
+	 * 
+	 * @param int|string|array $key Provide any of the following:
+	 *  - Key of Page to retrieve.
+	 *  - A selector string or selector array, to return the first item that matches the selector.
+	 *  - A string containing the "name" property of any Page, and the matching Page will be returned.
+	 * @return Page|NullPage
+	 * @since 3.0.162
+	 * @see WireArray::get()
+	 * 
+	 */
+	public function getPage($key) {
+		$value = $this->get($key);
+		return $value instanceof Page ? $value : $this->wire()->pages->newNullPage();
+	}
+
+	/**
 	 * Find all pages in this PageArray that match the given selector (non-destructive)
 	 *
 	 * This is non destructive and returns a brand new PageArray.
@@ -496,6 +544,7 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 *
 	 * @param string $selector AttributeSelector string.
 	 * @return PageArray|WireArray New PageArray instance
+	 * @see WireArray::find()
 	 *
 	 */
 	public function find($selector) {
@@ -503,16 +552,84 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	}
 
 	/**
-	 * Same as find, but returns a single Page rather than PageArray or FALSE if empty.
+	 * Same as find() method, but returns a single Page rather than PageArray or FALSE if empty.
 	 * 
 	 * #pw-internal
 	 *
 	 * @param string $selector
 	 * @return Page|bool
+	 * @see WireArray::findOne()
 	 *
 	 */
 	public function findOne($selector) {
 		return parent::findOne($selector);
+	}
+
+	/**
+	 * Same as find() or findOne() methods, but always returns a Page (whether Page or NullPage)
+	 *
+	 * @param string $selector
+	 * @return Page|NullPage
+	 * @since 3.0.162
+	 *
+	 */
+	public function findOnePage($selector) {
+		$value = parent::findOne($selector);
+		return $value instanceof Page ? $value : $this->wire()->pages->newNullPage();
+	}
+
+	/**
+	 * Get Page from this PageArray having given name, or return NullPage if not present
+	 * 
+	 * @param string $name
+	 * @return NullPage|Page
+	 * @since 3.0.162
+	 * 
+	 */
+	public function getPageByName($name) {
+		return $this->getPageByProperty('name', $name, true); 
+	}
+
+	/**
+	 * Get Page from this PageArray having given ID, or return NullPage if not present
+	 * 
+	 * @param int $id
+	 * @return NullPage|Page
+	 * @since 3.0.162
+	 *
+	 */
+	public function getPageByID($id) {
+		$id = (int) $id;
+		if(isset($this->keyIndex[$id])) {
+			$k = $this->keyIndex[$id];
+			if(isset($this->data[$k]) && $this->data[$k]->id === $id) return $this->data[$k];
+		}
+		return $this->getPageByProperty('id', (int) $id, true);
+	}
+	
+	/**
+	 * Get first found Page object matching property/value, or return NullPage if not present in this PageArray
+	 * 
+	 * #pw-internal
+	 *
+	 * @param string $property Name of page property or field
+	 * @param string|mixed $value Value to match 
+	 * @param bool $strict Match value with strict type enforcement? (default=false)
+	 * @return Page|NullPage
+	 * @since 3.0.162
+	 *
+	 */
+	public function getPageByProperty($property, $value, $strict = false) {
+		$foundPage = null;
+		foreach($this->data as $item) {
+			if($strict) {
+				if($item->get($property) === $value) $foundPage = $item;
+			} else {
+				if($item->get($property) == $value) $foundPage = $item;
+			}
+			if($foundPage) break;
+		}
+		return $foundPage ? $foundPage : $this->wire()->pages->newNullPage();
 	}
 
 	/**
@@ -637,12 +754,12 @@ class PageArray extends PaginatedArray implements WirePaginatable {
 	 * 
 	 * #pw-internal
 	 * 
-	 * @param array $options
+	 * @param array|null $options Specify array to set or omit this argument to get
 	 * @return array
 	 * 
 	 */
-	public function finderOptions(array $options = array()) {
-		$this->finderOptions = $options;
+	public function finderOptions($options = null) {
+		if(is_array($options)) $this->finderOptions = $options;
 		return $this->finderOptions;
 	}
 

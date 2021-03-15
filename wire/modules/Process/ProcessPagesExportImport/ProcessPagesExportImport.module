@@ -77,10 +77,12 @@ class ProcessPagesExportImport extends Process {
 					return $form->render();
 				}
 			} else {
+				/*
 				$this->warning(
 					'Please note this is a development version of pages export/import ' . 
 					'and not yet recommended for production use.'
 				);
+				*/
 				$form = $this->buildForm();
 				return $form->render();
 			}
@@ -101,11 +103,14 @@ class ProcessPagesExportImport extends Process {
 	 * 
 	 */
 	protected function buildForm($tab = '') {
-		
+	
+		/** @var Modules $modules */
 		$modules = $this->wire('modules');
 		$modules->get('JqueryWireTabs'); 
+		/** @var User $user */
 		$user = $this->wire('user');
-		
+	
+		/** @var InputfieldForm $form */
 		$form = $modules->get('InputfieldForm');
 		$form->attr('id', 'ProcessPagesExportImport');
 		$form->attr('method', 'post'); 
@@ -129,21 +134,25 @@ class ProcessPagesExportImport extends Process {
 	 * 
 	 */
 	protected function buildImportTab() {
-		
+	
+		/** @var Modules $modules */
 		$modules = $this->wire('modules');
 
-		$tab = new InputfieldWrapper();
+		/** @var InputfieldWrapper $tab */
+		$tab = $this->wire(new InputfieldWrapper());
 		$tab->attr('id+name', 'tab_import');
 		$tab->attr('title', $this->_('Import'));
 		$tab->addClass('WireTab');
-	
+
+		/** @var InputfieldTextarea $f */
 		$f = $modules->get('InputfieldTextarea'); 
 		$f->name = 'import_json';
 		$f->label = $this->_('Import from JSON string'); 
 		$f->icon = 'scissors';
 		$f->description = $this->_('Paste in the JSON string previously exported from this tool.'); 
 		$tab->add($f);
-	
+
+		/** @var InputfieldFile $f */
 		$f = $modules->get('InputfieldFile');
 		$f->name = 'import_zip';
 		$f->label = $this->_('Import from ZIP file upload') . " (experimental)";
@@ -157,6 +166,7 @@ class ProcessPagesExportImport extends Process {
 		$f->destinationPath = $this->exportImport->getExportPath();
 		$tab->add($f);
 
+		/** @var InputfieldSubmit $f */
 		$f = $modules->get('InputfieldSubmit');
 		$f->attr('name', 'submit_import');
 		$f->val($this->_('Continue')); 
@@ -178,7 +188,7 @@ class ProcessPagesExportImport extends Process {
 		/** @var WireInput $input */
 		$input = $this->wire('input');
 
-		/** @var InputfieldWrapper $importTab */
+		/** @var InputfieldWrapper|InputfieldForm $importTab */
 		$importTab = $this->buildForm('import');
 	
 		$submitCommit = $input->post('submit_commit_import') ? true : false;
@@ -197,7 +207,7 @@ class ProcessPagesExportImport extends Process {
 			if(!$zipFile || !is_file($zipFile)) throw new WireException('No ZIP file found: ' . $zipFile); 
 			$unzipPath = $this->exportImport->getExportPath('import-zip'); 
 			$zipFileItems = $this->wire('files')->unzip($zipFile, $unzipPath);
-			unlink($zipFile); 
+			$this->wire('files')->unlink($zipFile); 
 			if(empty($zipFileItems)) throw new WireException("No files found in ZIP"); 
 			$jsonFile = $unzipPath . "pages.json";
 			$this->wire('session')->setFor($this, 'filesPath', $unzipPath);
@@ -281,6 +291,7 @@ class ProcessPagesExportImport extends Process {
 		//   'pages' => array( page import data ), 
 		//   'fields' => array( fields information ), 
 		// );
+		set_time_limit(3600);
 
 		/** @var WireInput $input */
 		$input = $this->wire('input');
@@ -296,7 +307,7 @@ class ProcessPagesExportImport extends Process {
 		$options = array(
 			'update' => $importMode == 'all' || $importMode == 'update',
 			'create' => $importMode == 'all' || $importMode == 'create',
-			'saveOptions' => array('adjustName' => true),
+			'saveOptions' => array('adjustName' => true, 'quiet' => true),
 			'fieldNames' => $fieldNames, 
 			'replaceFields' => isset($a['_replaceFields']) ? $a['_replaceFields'] : array(), 
 			'commit' => $submitCommit,
@@ -307,6 +318,8 @@ class ProcessPagesExportImport extends Process {
 			'changeStatus' => in_array('status', $fieldNames),
 			'changeSort' => in_array('sort', $fieldNames),
 			'filesPath' => $this->wire('session')->getFor($this, 'filesPath'), 
+			'originalHost' => isset($a['host']) ? $a['host'] : $this->wire('config')->httpHost, 
+			'originalRootUrl' => isset($a['url']) ? $a['url'] : $this->wire('config')->urls->root,
 		);
 		
 		foreach($a['pages'] as $key => $item) {
@@ -539,7 +552,7 @@ class ProcessPagesExportImport extends Process {
 				$fieldset->add($f);
 			}
 		} else {
-			$fieldset = new InputfieldWrapper();
+			$fieldset = $this->wire(new InputfieldWrapper());
 		}
 		
 		if($numFatalItems) $a['_noCommit'] = true;
@@ -601,7 +614,13 @@ class ProcessPagesExportImport extends Process {
 						$path = rtrim($importParentPath . substr($path, strlen($missingParentPath)), '/') . '/';
 					}
 				}
-				if($path == $item['path']) $path = $importParentPath . trim($path, '/') . '/';
+				if($path == $item['path']) {
+					if(strpos($path, $importParentPath) === 0) {
+						// parent already present in path
+					} else {
+						$path = $importParentPath . trim($path, '/') . '/';
+					}
+				}
 				$a['pages'][$key]['path'] = $path;
 			}
 		}
@@ -899,7 +918,7 @@ class ProcessPagesExportImport extends Process {
 
 		$modules = $this->wire('modules');
 		
-		$tab = new InputfieldWrapper();
+		$tab = $this->wire(new InputfieldWrapper());
 		$tab->attr('id+name', 'tab_export');
 		$tab->attr('title', $this->_('Export'));
 		$tab->addClass('WireTab');
@@ -1013,6 +1032,8 @@ class ProcessPagesExportImport extends Process {
 		// options_parent: array('parent', 'recursive')
 		// export_fields: array(field names)
 		// export_to: string(zip, json)
+		
+		set_time_limit(3600);
 
 		/** @var Pages $pages */
 		$pages = $this->wire('pages');
@@ -1099,7 +1120,7 @@ class ProcessPagesExportImport extends Process {
 					'forceDownload' => true,
 					'exit' => false
 				));
-				unlink($zipFile);
+				$this->wire('files')->unlink($zipFile);
 				exit;
 			} else {
 				throw new WireException('Export failed during ZIP file generation');

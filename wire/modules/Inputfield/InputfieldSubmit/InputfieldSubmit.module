@@ -3,26 +3,40 @@
 /**
  * An Inputfield for handling "submit" buttons
  * 
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
  * https://processwire.com
  * License: MPL 2.0
  * 
  * @property bool $header Whether or not button will also appear in header (default=false). 
  * @property bool $secondary Whether or not button is secondary (default=false). 
  * @property bool $small Whether or not button should be small, where supported (default=false). 
- * @property string $dropdownInputName #pw-internal
+ * @property string $dropdownInputName Name of input to receive selected dropdown value (default='_action_value') #pw-internal
+ * @property bool $dropdownSubmit Selected dropdown value becomes submit value? (default=true) #pw-internal 
+ * @property string $html Button inner HTML label (default='') @since 3.0.134
+ * @property string $text Button inner TEXT label, if $html not provided. (default='') @since 3.0.134
+ * @property string $value Button value attribute and inner TEXT label, if $text it provided (default='Submit')
+ * @property string $textClass Class applied to span for inner html/text, omitted if blank (default='ui-button-text') @since 3.0.134
+ * @property-read string|false $submitValue Value that was submitted if clicked (default=false) @since 3.0.134
  *
  */
 class InputfieldSubmit extends Inputfield {
 
 	public static function getModuleInfo() {
 		return array(
-			'title' => __('Submit', __FILE__), // Module Title
+			'title' => 'Submit', // Module Title
 			'summary' => __('Form submit button', __FILE__), // Module Summary
 			'version' => 102,
 			'permanent' => true, 
 			);
 	}
+
+	/**
+	 * Names of submit buttons created
+	 * 
+	 * @var array
+	 * 
+	 */ 
+	protected static $submitNames = array();
 
 	/**
 	 * Additional dropdown actions added to the button
@@ -41,12 +55,20 @@ class InputfieldSubmit extends Inputfield {
 		$this->attr('type', 'submit'); 
 		$this->attr('name', 'submit'); 
 		$this->attr('value', $this->_('Submit')); // Standard submit button label
+		$this->set('submitValue', false); // becomes string after processInput
 		$this->attr('class', 'ui-button ui-widget ui-state-default ui-corner-all');
+		$this->set('textClass', 'ui-button-text');
 		$this->skipLabel = Inputfield::skipLabelBlank; 
 		$this->set('small', false);
+		$this->set('html', '');
+		$this->set('text', '');
 		
 		// name of 'hidden' input that will receive the clicked dropdown item value
 		$this->set('dropdownInputName', '_action_value');
+		
+		// Selected dropdown value becomes submit value? If set to false, then only the 
+		// dropdownInputName above will contain the selected value
+		$this->set('dropdownSubmit', true);
 	}
 	
 	public function set($key, $value) {
@@ -63,7 +85,12 @@ class InputfieldSubmit extends Inputfield {
 		if($key == 'secondary') return $this->hasClass('ui-priority-secondary');
 		return parent::get($key);
 	}
-
+	
+	public function setAttribute($key, $value) {
+		if($key === 'name') self::$submitNames[$value] = $value;
+		return parent::setAttribute($key, $value);
+	}	
+		
 	/**
 	 * Show another copy of this button in the header? 
 	 * 
@@ -142,10 +169,18 @@ class InputfieldSubmit extends Inputfield {
 	 */
 	public function ___render() {
 		$attrs  = $this->getAttributesString();
-		$icon = $this->icon ? $this->sanitizer->name($this->icon) : '';
-		$icon = $icon ? "<i class='fa fa-$icon'></i> " : '';
-		$value = $this->entityEncode($this->attr('value'));
-		$out = "<button $attrs><span class='ui-button-text'>$icon$value</span></button>";
+		$icon = $this->icon ? $this->wire('sanitizer')->name($this->icon) : '';
+		$icon = $icon ? wireIconMarkup($icon) . ' ' : '';
+		$buttonText = $this->getSetting('html'); // option for non-encoded button text
+		if(empty($buttonText)) {
+			$buttonText = $this->getSetting('text');
+			if(empty($buttonText)) $buttonText = $this->attr('value');
+			$buttonText = $this->entityEncode($buttonText);
+		}
+		$buttonText = $icon . $buttonText;
+		$textClass = $this->wire('sanitizer')->entities($this->getSetting('textClass'));
+		if(!empty($textClass)) $buttonText = "<span class='$textClass'>$buttonText</span>";
+		$out = "<button $attrs>$buttonText</button>";
 		if($this->getSetting('small')) $out = "<small>$out</small>";
 		if(count($this->dropdownItems)) $out .= $this->renderDropdown();
 		return $out; 
@@ -196,8 +231,11 @@ class InputfieldSubmit extends Inputfield {
 		if($numValues) {
 			// there are values that can be populated to a hidden input
 			$inputID = $dropdownID . '_value';
-			$out = "<input type='hidden' name='{$this->dropdownInputName}' id='$inputID' value='' />" .
-				str_replace("<ul ", "<ul data-pw-dropdown-input='#$inputID' ", $out);
+			$attr = "type='hidden' name='{$this->dropdownInputName}' id='$inputID' value='' ";
+			// copy the submitted dropdown value to the submit button value?
+			if($this->dropdownSubmit) $attr .= "data-pw-dropdown-submit='1' ";
+			// render the output
+			$out = "<input $attr />" . str_replace("<ul ", "<ul data-pw-dropdown-input='#$inputID' ", $out);
 		}
 	
 		// script to initialize this dropdown immediately
@@ -214,7 +252,31 @@ class InputfieldSubmit extends Inputfield {
 	 * 
 	 */
 	public function ___processInput(WireInputData $input) {
-		// submit buttons don't need to process any input
+		
+		$this->submitValue = '';
+		$name = $this->attr('name');
+		$value = $input->$name;
+		
+		if($value === $this->attr('value')) {
+			$this->submitValue = $value;
+			return $this;
+		} 
+		
+		if(!count($this->dropdownItems)) return $this;
+		
+		if(!$this->dropdownSubmit) {
+			$name = $this->dropdownInputName;
+			$value = $input->$name;
+		}
+		
+		if($value === null) return $this;
+		
+		foreach($this->dropdownItems as $item) {
+			if($value !== $item['value']) continue;
+			$this->submitValue = $item['value'];
+			break;
+		}
+		
 		return $this; 
 	}
 
@@ -261,6 +323,16 @@ class InputfieldSubmit extends Inputfield {
 	 */
 	public function addActionLink($url, $label, $icon = '') {
 		$this->addActionItem('link', $url, $label, $icon);
+	}
+	
+	/**
+	 * #pw-internal
+	 * 
+	 * @return array()
+	 * 
+	 */
+	static public function getSubmitNames() {
+		return self::$submitNames;
 	}
 	
 }

@@ -1,4 +1,4 @@
-/*! UIkit 3.0.0-beta.40 | http://www.getuikit.com | (c) 2014 - 2017 YOOtheme | MIT License */
+/*! UIkit 3.0.0-rc.17 | http://www.getuikit.com | (c) 2014 - 2018 YOOtheme | MIT License */
 /* ========================================================================
    Component: Base
  ========================================================================== */
@@ -157,10 +157,10 @@ video {
   vertical-align: middle;
 }
 /*
- * Responsiveness
- * 1. Set a maximum width
- * 2. Auto scale the height. Only needed if `height` attribute is present
- * 2. Corrects `max-width` behavior if padding and border are used
+ * 1. Add responsiveness.
+ * 2. Auto-scale the height. Only needed if `height` attribute is present.
+ * 3. Corrects responsive `max-width` behavior if padding and border are used.
+ * 4. Exclude SVGs for IE11 because they don't preserve their aspect ratio.
  */
 audio,
 canvas,
@@ -173,11 +173,33 @@ video {
   /* 3 */
   box-sizing: border-box;
 }
+/* 4 */
+@supports (display: block) {
+  svg {
+    max-width: 100%;
+    height: auto;
+    box-sizing: border-box;
+  }
+}
 /*
  * Hide the overflow in IE.
  */
 svg:not(:root) {
   overflow: hidden;
+}
+/*
+ * Hide `alt` text for lazy load images
+ * Selector for background while loading img[data-src*='.jpg'][src*='data:image'] { background: grey; }
+ */
+img:not([src]) {
+  visibility: hidden;
+}
+/*
+ * Iframe
+ * Remove border in all browsers
+ */
+iframe {
+  border: 0;
 }
 /* Block elements
  ========================================================================== */
@@ -275,6 +297,17 @@ h6,
 .uk-h6 {
   font-size: 0.875rem;
   line-height: 1.4;
+}
+/* Tablet landscape and bigger */
+@media (min-width: 960px) {
+  h1,
+  .uk-h1 {
+    font-size: 2.625rem;
+  }
+  h2,
+  .uk-h2 {
+    font-size: 2rem;
+  }
 }
 /* Lists
  ========================================================================== */
@@ -381,11 +414,6 @@ pre code {
 }
 /* Selection pseudo-element
  ========================================================================== */
-::-moz-selection {
-  background: #39f;
-  color: #fff;
-  text-shadow: none;
-}
 ::selection {
   background: #39f;
   color: #fff;
@@ -414,43 +442,28 @@ summary {
 template {
   display: none;
 }
-/* Iframe
- ========================================================================== */
-iframe {
-  border: 0;
-}
-/* Prevent the 300ms delay for touchscreen interactions
- ========================================================================== */
-/*
- * Most browsers prevent the 300ms delay automatically for sites that use the `width=device-width` property.
- * For Safari on iOS 9.3+, IE 11 and Edge on desktops and IE 11 on Windows Phone 8.1 it must be applied manually.
- */
-a,
-area,
-button,
-input,
-label,
-select,
-summary,
-textarea {
-  touch-action: manipulation;
-}
 /* Pass media breakpoints to JS
  ========================================================================== */
 /*
  * Breakpoints
  */
-.var-media-s::before {
+.uk-breakpoint-s::before {
   content: '640px';
 }
-.var-media-m::before {
+.uk-breakpoint-m::before {
   content: '960px';
 }
-.var-media-l::before {
+.uk-breakpoint-l::before {
   content: '1200px';
 }
-.var-media-xl::before {
+.uk-breakpoint-xl::before {
   content: '1600px';
+}
+:root {
+  --uk-breakpoint-s: 640px;
+  --uk-breakpoint-m: 960px;
+  --uk-breakpoint-l: 1200px;
+  --uk-breakpoint-xl: 1600px;
 }
 /* ========================================================================
    Component: Link
@@ -504,11 +517,17 @@ a.uk-link-reset:hover,
 /* Primary
  ========================================================================== */
 .uk-heading-primary {
-  font-size: 2.625rem;
+  font-size: 3rem;
   line-height: 1.2;
 }
 /* Tablet landscape and bigger */
 @media (min-width: 960px) {
+  .uk-heading-primary {
+    font-size: 3.375rem;
+  }
+}
+/* Desktop and bigger */
+@media (min-width: 1200px) {
   .uk-heading-primary {
     font-size: 3.75rem;
     line-height: 1.1;
@@ -520,15 +539,15 @@ a.uk-link-reset:hover,
   font-size: 4rem;
   line-height: 1.1;
 }
-/* Phone landscape and bigger */
-@media (min-width: 640px) {
+/* Tablet landscape and bigger */
+@media (min-width: 960px) {
   .uk-heading-hero {
     font-size: 6rem;
     line-height: 1;
   }
 }
-/* Tablet landscape and bigger */
-@media (min-width: 960px) {
+/* Desktop and bigger */
+@media (min-width: 1200px) {
   .uk-heading-hero {
     font-size: 8rem;
     line-height: 1;
@@ -660,6 +679,15 @@ a.uk-link-reset:hover,
   border-top: 1px solid #e5e5e5;
   vertical-align: top;
 }
+/* Vertical
+ ========================================================================== */
+.uk-divider-vertical {
+  width: 1px;
+  height: 100px;
+  margin-left: auto;
+  margin-right: auto;
+  border-left: 1px solid #e5e5e5;
+}
 /* ========================================================================
    Component: List
  ========================================================================== */
@@ -727,6 +755,7 @@ a.uk-link-reset:hover,
 }
 /*
  * Bullet
+ * 1. Reset display table which causes issues in combination with multi column layouts
  */
 .uk-list-bullet > li {
   position: relative;
@@ -742,7 +771,8 @@ a.uk-link-reset:hover,
   background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%226%22%20height%3D%226%22%20viewBox%3D%220%200%206%206%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%0A%20%20%20%20%3Ccircle%20fill%3D%22%23354b60%22%20cx%3D%223%22%20cy%3D%223%22%20r%3D%223%22%20%2F%3E%0A%3C%2Fsvg%3E");
   background-repeat: no-repeat;
   background-position: 50% 50%;
-  float: left;
+  /* 1 */
+  display: block;
 }
 /* Size modifier
  ========================================================================== */
@@ -858,12 +888,6 @@ a.uk-link-reset:hover,
   text-align: left;
   color: #8d939e;
 }
-/* Row
- ========================================================================== */
-.uk-table > tr.uk-active,
-.uk-table tbody tr.uk-active {
-  background: #ffd;
-}
 /* Alignment modifier
  ========================================================================== */
 .uk-table-middle,
@@ -896,11 +920,21 @@ a.uk-link-reset:hover,
 .uk-table-hover tbody tr:hover {
   background: #ffd;
 }
+/* Active state
+ ========================================================================== */
+.uk-table > tr.uk-active,
+.uk-table tbody tr.uk-active {
+  background: #ffd;
+}
 /* Size modifier
  ========================================================================== */
 .uk-table-small th,
 .uk-table-small td {
   padding: 10px 12px;
+}
+.uk-table-large th,
+.uk-table-large td {
+  padding: 22px 12px;
 }
 /* Justify modifier
  ========================================================================== */
@@ -1029,14 +1063,11 @@ button.uk-icon:not(:disabled) {
 }
 /*
  * Set the fill and stroke color of all SVG elements to the current text color
- * 1. Fix for uppercase attribute names in Edge. Will be fixed in Windows 10 builds 16251+
  */
-.uk-icon [fill*='#']:not(.uk-preserve),
-.uk-icon [FILL*='#']:not(.uk-preserve) {
+.uk-icon [fill*='#']:not(.uk-preserve) {
   fill: currentcolor;
 }
-.uk-icon [stroke*='#']:not(.uk-preserve),
-.uk-icon [STROKE*='#']:not(.uk-preserve) {
+.uk-icon [stroke*='#']:not(.uk-preserve) {
   stroke: currentcolor;
 }
 /*
@@ -1420,13 +1451,13 @@ button.uk-icon:not(:disabled) {
 /*
  * Placeholder
  */
-.uk-input:-ms-input-placeholder {
+.uk-input::-ms-input-placeholder {
   color: #8d939e !important;
 }
 .uk-input::placeholder {
   color: #8d939e;
 }
-.uk-textarea:-ms-input-placeholder {
+.uk-textarea::-ms-input-placeholder {
   color: #8d939e !important;
 }
 .uk-textarea::placeholder {
@@ -1518,6 +1549,7 @@ select.uk-form-width-xsmall {
  * 1. Remove default style. Also works in Firefox
  * 2. Style
  * 3. Remove default style in IE 10/11
+ * 4. Set `color` for options in the select dropdown, because the inherited `color` might be too light.
  */
 .uk-select:not([multiple]):not([size]) {
   /* 1 */
@@ -1532,6 +1564,10 @@ select.uk-form-width-xsmall {
 /* 3 */
 .uk-select:not([multiple]):not([size])::-ms-expand {
   display: none;
+}
+/* 4 */
+.uk-select:not([multiple]):not([size]) option:not([disabled]) {
+  color: #444;
 }
 /*
  * Disabled
@@ -1773,7 +1809,7 @@ select.uk-form-width-xsmall {
 /*
  * Input padding
  */
-.uk-form-icon:not(.uk-form-icon-flip) + .uk-input {
+.uk-form-icon:not(.uk-form-icon-flip) ~ .uk-input {
   padding-left: 40px !important;
 }
 /*
@@ -1783,7 +1819,7 @@ select.uk-form-width-xsmall {
   right: 0;
   left: auto;
 }
-.uk-form-icon-flip + .uk-input {
+.uk-form-icon-flip ~ .uk-input {
   padding-right: 40px !important;
 }
 /* ========================================================================
@@ -1792,15 +1828,14 @@ select.uk-form-width-xsmall {
 /*
  * 1. Remove margins in Chrome, Safari and Opera.
  * 2. Remove borders for `button`.
- * 3. Remove border-radius in Chrome.
- * 4. Address `overflow` set to `hidden` in IE.
- * 5. Correct `font` properties and `color` not being inherited for `button`.
- * 6. Remove the inheritance of text transform in Edge, Firefox, and IE.
- * 7. Style
- * 8. `line-height` is used to create a height because it also centers the text vertically for `a` elements.
+ * 3. Address `overflow` set to `hidden` in IE.
+ * 4. Correct `font` properties and `color` not being inherited for `button`.
+ * 5. Remove the inheritance of text transform in Edge, Firefox, and IE.
+ * 6. Style
+ * 7. `line-height` is used to create a height because it also centers the text vertically for `a` elements.
  *    Better would be to use height and flexbox to center the text vertically but flexbox doesn't work in Firefox on `button` elements.
- * 9. Align text if button has a width
- * 10. Required for `a`.
+ * 8. Align text if button has a width
+ * 9. Required for `a`.
  */
 .uk-button {
   /* 1 */
@@ -1808,29 +1843,29 @@ select.uk-form-width-xsmall {
   /* 2 */
   border: none;
   /* 3 */
-  border-radius: 0;
-  /* 4 */
   overflow: visible;
-  /* 5 */
+  /* 4 */
   font: inherit;
   color: inherit;
-  /* 6 */
+  /* 5 */
   text-transform: none;
-  /* 7 */
+  /* 6 */
   display: inline-block;
   box-sizing: border-box;
   padding: 0 30px;
   vertical-align: middle;
   font-size: 16px;
-  /* 8 */
+  /* 7 */
   line-height: 38px;
-  /* 9 */
+  /* 8 */
   text-align: center;
-  /* 10 */
+  /* 9 */
   text-decoration: none;
-  text-transform: capitalize;
   transition: 0.1s ease-in-out;
   transition-property: color, background-color, border-color;
+}
+html[lang=en] .uk-button {
+  text-transform: capitalize;
 }
 .uk-button:not(:disabled) {
   cursor: pointer;
@@ -1844,7 +1879,7 @@ select.uk-form-width-xsmall {
 }
 /* Hover */
 .uk-button:hover {
-  /* 8 */
+  /* 9 */
   text-decoration: none;
 }
 /* Focus */
@@ -2230,6 +2265,9 @@ select.uk-form-width-xsmall {
 }
 /* Size modifier
  ========================================================================== */
+.uk-container-xsmall {
+  max-width: 750px;
+}
 .uk-container-small {
   max-width: 900px;
 }
@@ -2840,11 +2878,13 @@ select.uk-form-width-xsmall {
 /*
      * Default
      */
-.uk-card-body .uk-nav-default {
-  margin: -15px -30px;
+.uk-card-body > .uk-nav-default {
+  margin-left: -30px;
+  margin-right: -30px;
 }
-.uk-card-title + .uk-nav-default {
-  margin-top: 0;
+.uk-card-body > .uk-nav-default:only-child {
+  margin-top: -15px;
+  margin-bottom: -15px;
 }
 .uk-card-body .uk-nav-default > li > a,
 .uk-card-body .uk-nav-default .uk-nav-header,
@@ -2857,11 +2897,13 @@ select.uk-form-width-xsmall {
 }
 /* Desktop and bigger */
 @media (min-width: 1200px) {
-  .uk-card-body .uk-nav-default {
-    margin: -25px -40px;
+  .uk-card-body > .uk-nav-default {
+    margin-left: -40px;
+    margin-right: -40px;
   }
-  .uk-card-title + .uk-nav-default {
-    margin-top: 0;
+  .uk-card-body > .uk-nav-default:only-child {
+    margin-top: -25px;
+    margin-bottom: -25px;
   }
   .uk-card-body .uk-nav-default > li > a,
   .uk-card-body .uk-nav-default .uk-nav-header,
@@ -2876,11 +2918,13 @@ select.uk-form-width-xsmall {
 /*
      * Small
      */
-.uk-card-small .uk-nav-default {
-  margin: -5px -20px;
+.uk-card-small > .uk-nav-default {
+  margin-left: -20px;
+  margin-right: -20px;
 }
-.uk-card-small .uk-card-title + .uk-nav-default {
-  margin-top: 0;
+.uk-card-small > .uk-nav-default:only-child {
+  margin-top: -5px;
+  margin-bottom: -5px;
 }
 .uk-card-small .uk-nav-default > li > a,
 .uk-card-small .uk-nav-default .uk-nav-header,
@@ -2896,11 +2940,20 @@ select.uk-form-width-xsmall {
      */
 /* Desktop and bigger */
 @media (min-width: 1200px) {
-  .uk-card-large .uk-nav-default {
-    margin: -55px -70px;
+  .uk-card-large > .uk-nav-default {
+    margin: 0;
   }
-  .uk-card-large .uk-card-title + .uk-nav-default {
-    margin-top: 0;
+  .uk-card-large > .uk-nav-default:only-child {
+    margin: 0;
+  }
+  .uk-card-large .uk-nav-default > li > a,
+  .uk-card-large .uk-nav-default .uk-nav-header,
+  .uk-card-large .uk-nav-default .uk-nav-divider {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .uk-card-large .uk-nav-default .uk-nav-sub {
+    padding-left: 15px;
   }
 }
 /* ========================================================================
@@ -3221,8 +3274,14 @@ select.uk-form-width-xsmall {
 /* Title
  ========================================================================== */
 .uk-article-title {
-  font-size: 2.625rem;
+  font-size: 2.23125rem;
   line-height: 1.2;
+}
+/* Tablet landscape and bigger */
+@media (min-width: 960px) {
+  .uk-article-title {
+    font-size: 2.625rem;
+  }
 }
 /* Meta
  ========================================================================== */
@@ -3243,6 +3302,10 @@ select.uk-form-width-xsmall {
  ========================================================================== */
 /* Sections
  ========================================================================== */
+.uk-comment-body {
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+}
 .uk-comment-header {
   margin-bottom: 20px;
 }
@@ -3464,10 +3527,10 @@ select.uk-form-width-xsmall {
 .uk-search-default .uk-search-icon {
   width: 40px;
 }
-.uk-search-default .uk-search-icon:not(.uk-search-icon-flip) + .uk-search-input {
+.uk-search-default .uk-search-icon:not(.uk-search-icon-flip) ~ .uk-search-input {
   padding-left: 40px;
 }
-.uk-search-default .uk-search-icon-flip + .uk-search-input {
+.uk-search-default .uk-search-icon-flip ~ .uk-search-input {
   padding-right: 40px;
 }
 /* Navbar modifier
@@ -3489,10 +3552,10 @@ select.uk-form-width-xsmall {
 .uk-search-navbar .uk-search-icon {
   width: 40px;
 }
-.uk-search-navbar .uk-search-icon:not(.uk-search-icon-flip) + .uk-search-input {
+.uk-search-navbar .uk-search-icon:not(.uk-search-icon-flip) ~ .uk-search-input {
   padding-left: 40px;
 }
-.uk-search-navbar .uk-search-icon-flip + .uk-search-input {
+.uk-search-navbar .uk-search-icon-flip ~ .uk-search-input {
   padding-right: 40px;
 }
 /* Large modifier
@@ -3514,10 +3577,10 @@ select.uk-form-width-xsmall {
 .uk-search-large .uk-search-icon {
   width: 80px;
 }
-.uk-search-large .uk-search-icon:not(.uk-search-icon-flip) + .uk-search-input {
+.uk-search-large .uk-search-icon:not(.uk-search-icon-flip) ~ .uk-search-input {
   padding-left: 80px;
 }
-.uk-search-large .uk-search-icon-flip + .uk-search-input {
+.uk-search-large .uk-search-icon-flip ~ .uk-search-input {
   padding-right: 80px;
 }
 /* Toggle
@@ -3832,7 +3895,7 @@ ul.uk-nav-sub {
   align-items: center;
   /* 2 */
   box-sizing: border-box;
-  height: 73px;
+  min-height: 73px;
   padding: 0 15px;
   /* 3 */
   font-size: 16px;
@@ -4598,13 +4661,11 @@ ul.uk-nav-sub {
   margin-left: -15px;
 }
 /*
- * 1. Space is allocated solely based on content dimensions: 0 0 auto
- * 2. Gutter
+ * Space is allocated based on content dimensions, but shrinks: 0 1 auto
+ * 1. Gutter
  */
 .uk-thumbnav > * {
   /* 1 */
-  flex: none;
-  /* 2 */
   padding-left: 15px;
 }
 /* Items
@@ -4678,16 +4739,17 @@ ul.uk-nav-sub {
   color: #333;
   overflow: hidden;
 }
-.uk-accordion-title::after {
+.uk-accordion-title::before {
   content: "";
   width: 1.4em;
   height: 1.4em;
+  margin-left: 10px;
   float: right;
   background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%2213%22%20height%3D%2213%22%20viewBox%3D%220%200%2013%2013%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%0A%20%20%20%20%3Crect%20fill%3D%22%23354b60%22%20width%3D%2213%22%20height%3D%221%22%20x%3D%220%22%20y%3D%226%22%20%2F%3E%0A%20%20%20%20%3Crect%20fill%3D%22%23354b60%22%20width%3D%221%22%20height%3D%2213%22%20x%3D%226%22%20y%3D%220%22%20%2F%3E%0A%3C%2Fsvg%3E");
   background-repeat: no-repeat;
   background-position: 50% 50%;
 }
-.uk-open > .uk-accordion-title::after {
+.uk-open > .uk-accordion-title::before {
   background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%2213%22%20height%3D%2213%22%20viewBox%3D%220%200%2013%2013%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%0A%20%20%20%20%3Crect%20fill%3D%22%23354b60%22%20width%3D%2213%22%20height%3D%221%22%20x%3D%220%22%20y%3D%226%22%20%2F%3E%0A%3C%2Fsvg%3E");
 }
 /* Hover + Focus */
@@ -5159,7 +5221,7 @@ ul.uk-nav-sub {
   background: rgba(0, 0, 0, 0.3);
   color: rgba(255, 255, 255, 0.7);
 }
-.uk-lightbox-toolbar * {
+.uk-lightbox-toolbar > * {
   color: rgba(255, 255, 255, 0.7);
 }
 /* Toolbar Icon (Close)
@@ -5586,6 +5648,44 @@ ul.uk-nav-sub {
   margin-bottom: 0;
 }
 /* ========================================================================
+   Component: Leader
+ ========================================================================== */
+.uk-leader {
+  overflow: hidden;
+}
+/*
+ * 1. Place element in text flow
+ * 2. Never break into a new line
+ * 3. Get a string back with as many repeating characters to fill the container
+ * 4. Prevent wrapping. Overflowing characters will be clipped by the container
+ */
+.uk-leader-fill::after {
+  /* 1 */
+  display: inline-block;
+  margin-left: 15px;
+  /* 2 */
+  width: 0;
+  /* 3 */
+  content: attr(data-fill);
+  /* 4 */
+  white-space: nowrap;
+}
+/*
+ * Hide if media does not match
+ */
+.uk-leader-fill.uk-leader-hide::after {
+  display: none;
+}
+/*
+ * Pass fill character to JS
+ */
+.uk-leader-fill-content::before {
+  content: '.';
+}
+:root {
+  --uk-leader-fill-content: .;
+}
+/* ========================================================================
    Component: Iconnav
  ========================================================================== */
 /*
@@ -5605,13 +5705,11 @@ ul.uk-nav-sub {
   margin-left: -10px;
 }
 /*
- * 1. Space is allocated solely based on content dimensions: 0 0 auto
- * 2. Gutter
+ * Space is allocated based on content dimensions, but shrinks: 0 1 auto
+ * 1. Gutter
  */
 .uk-iconnav > * {
   /* 1 */
-  flex: none;
-  /* 2 */
   padding-left: 10px;
 }
 /* Items
@@ -5889,12 +5987,6 @@ ul.uk-nav-sub {
  ========================================================================== */
 .uk-sortable {
   position: relative;
-}
-/*
- * Deactivate browser touch actions in IE11 and Edge
- */
-.uk-sortable > * {
-  touch-action: none;
 }
 /*
  * Deactivate pointer-events on SVGs in Safari
@@ -6354,26 +6446,15 @@ ul.uk-nav-sub {
   width: auto;
 }
 /*
- *    Instead of 0, 1px is needed to make cell wrap into next row if predecessor is 100% wide
- *    and the grid gutter is 0 pixels wide
- */
-.uk-child-width-expand > * {
-  width: 1px;
-}
-/*
- * 1. Make `width: 1px` work, because according to the spec flex items won’t shrink
- *    below their minimum content size. To change this, set the min-width.
- *    Only needed for Firefox. All other browsers ignore this.
- *
- * 2. `width` is ignored when wrapping flex items in Safari
- *    https://github.com/philipwalton/flexbugs#11-min-and-max-size-declarations-are-ignored-when-wrapping-flex-items
+ * 1. Reset the `min-width`, which is set to auto by default, because
+ *    flex items won't shrink below their minimum intrinsic content size.
+ *    Using `1px` instead of `0`, so items still wrap into the next line,
+ *    if they have zero width and padding and the predecessor is 100% wide.
  */
 .uk-child-width-expand > :not([class*='uk-width']) {
   flex: 1;
   /* 1 */
-  min-width: 0;
-  /* 2 */
-  flex-basis: 1px;
+  min-width: 1px;
 }
 /* Phone landscape and bigger */
 @media (min-width: 640px) {
@@ -6398,13 +6479,9 @@ ul.uk-nav-sub {
   .uk-child-width-auto\@s > * {
     width: auto;
   }
-  .uk-child-width-expand\@s > * {
-    width: 1px;
-  }
   .uk-child-width-expand\@s > :not([class*='uk-width']) {
     flex: 1;
-    min-width: 0;
-    flex-basis: 1px;
+    min-width: 1px;
   }
 }
 /* Tablet landscape and bigger */
@@ -6430,13 +6507,9 @@ ul.uk-nav-sub {
   .uk-child-width-auto\@m > * {
     width: auto;
   }
-  .uk-child-width-expand\@m > * {
-    width: 1px;
-  }
   .uk-child-width-expand\@m > :not([class*='uk-width']) {
     flex: 1;
-    min-width: 0;
-    flex-basis: 1px;
+    min-width: 1px;
   }
 }
 /* Desktop and bigger */
@@ -6462,13 +6535,9 @@ ul.uk-nav-sub {
   .uk-child-width-auto\@l > * {
     width: auto;
   }
-  .uk-child-width-expand\@l > * {
-    width: 1px;
-  }
   .uk-child-width-expand\@l > :not([class*='uk-width']) {
     flex: 1;
-    min-width: 0;
-    flex-basis: 1px;
+    min-width: 1px;
   }
 }
 /* Large screen and bigger */
@@ -6494,13 +6563,9 @@ ul.uk-nav-sub {
   .uk-child-width-auto\@xl > * {
     width: auto;
   }
-  .uk-child-width-expand\@xl > * {
-    width: 1px;
-  }
   .uk-child-width-expand\@xl > :not([class*='uk-width']) {
     flex: 1;
-    min-width: 0;
-    flex-basis: 1px;
+    min-width: 1px;
   }
 }
 /* Single Widths
@@ -6574,10 +6639,8 @@ ul.uk-nav-sub {
 }
 /* Expand */
 .uk-width-expand {
-  width: 1px;
   flex: 1;
-  min-width: 0;
-  flex-basis: 1px;
+  min-width: 1px;
 }
 /* Phone landscape and bigger */
 @media (min-width: 640px) {
@@ -6645,10 +6708,8 @@ ul.uk-nav-sub {
   }
   /* Expand */
   .uk-width-expand\@s {
-    width: 1px;
     flex: 1;
-    min-width: 0;
-    flex-basis: 1px;
+    min-width: 1px;
   }
 }
 /* Tablet landscape and bigger */
@@ -6717,10 +6778,8 @@ ul.uk-nav-sub {
   }
   /* Expand */
   .uk-width-expand\@m {
-    width: 1px;
     flex: 1;
-    min-width: 0;
-    flex-basis: 1px;
+    min-width: 1px;
   }
 }
 /* Desktop and bigger */
@@ -6789,10 +6848,8 @@ ul.uk-nav-sub {
   }
   /* Expand */
   .uk-width-expand\@l {
-    width: 1px;
     flex: 1;
-    min-width: 0;
-    flex-basis: 1px;
+    min-width: 1px;
   }
 }
 /* Large screen and bigger */
@@ -6861,11 +6918,49 @@ ul.uk-nav-sub {
   }
   /* Expand */
   .uk-width-expand\@xl {
-    width: 1px;
     flex: 1;
-    min-width: 0;
-    flex-basis: 1px;
+    min-width: 1px;
   }
+}
+/* ========================================================================
+   Component: Height
+ ========================================================================== */
+[class*='uk-height'] {
+  box-sizing: border-box;
+}
+/*
+ * Only works if parent element has a height set
+ */
+.uk-height-1-1 {
+  height: 100%;
+}
+/*
+ * Useful to create image teasers
+ */
+.uk-height-viewport {
+  min-height: 100vh;
+}
+/*
+ * Pixel
+ * Useful for `overflow: auto`
+ */
+.uk-height-small {
+  height: 150px;
+}
+.uk-height-medium {
+  height: 300px;
+}
+.uk-height-large {
+  height: 450px;
+}
+.uk-height-max-small {
+  max-height: 150px;
+}
+.uk-height-max-medium {
+  max-height: 300px;
+}
+.uk-height-max-large {
+  max-height: 450px;
 }
 /* ========================================================================
    Component: Text
@@ -7060,21 +7155,17 @@ td.uk-text-truncate {
 /*
  * 1. Wrap long words onto the next line and break them if they are too long to fit
  * 2. Legacy `word-wrap` as fallback for `overflow-wrap`
- * 3. Add a hyphen where the word breaks
- * 4. Fix `overflow-wrap` which doesn't work with table cells in Chrome, Opera, IE11 and Edge
+ * 3. Fix `overflow-wrap` which doesn't work with table cells in Chrome, Opera, IE11 and Edge
  *    Must use `break-all` to support IE11 and Edge
+ * Note: Not using `hyphens: auto;` because it hyphenates text even if not needed
  */
 .uk-text-break {
   /* 1 */
   overflow-wrap: break-word;
   /* 2 */
   word-wrap: break-word;
-  /* 3 */
-  -ms-hyphens: auto;
-  -webkit-hyphens: auto;
-  hyphens: auto;
 }
-/* 4 */
+/* 3 */
 th.uk-text-break,
 td.uk-text-break {
   word-break: break-all;
@@ -7308,8 +7399,13 @@ iframe.uk-cover {
 }
 /* Attachment
  ========================================================================== */
+/*
+ * 1. Fix bug introduced in Chrome 67: the background image is not visible if any element on the page uses `translate3d`
+ */
 .uk-background-fixed {
   background-attachment: fixed;
+  /* 1 */
+  backface-visibility: hidden;
 }
 /*
  * Exclude touch devices because `fixed` doesn't work on iOS and Android
@@ -7488,6 +7584,27 @@ iframe.uk-cover {
   }
 }
 /* ========================================================================
+   Component: SVG
+ ========================================================================== */
+/*
+ * 1. Fill all SVG elements with the current text color if no `fill` attribute is set
+ * 2. Set the fill and stroke color of all SVG elements to the current text color
+ */
+/* 1 */
+.uk-svg,
+.uk-svg:not(.uk-preserve) [fill*='#']:not(.uk-preserve) {
+  fill: currentcolor;
+}
+.uk-svg:not(.uk-preserve) [stroke*='#']:not(.uk-preserve) {
+  stroke: currentcolor;
+}
+/*
+ * Fix Firefox blurry SVG rendering: https://bugzilla.mozilla.org/show_bug.cgi?id=1046835
+ */
+.uk-svg {
+  transform: translate(0, 0);
+}
+/* ========================================================================
    Component: Utility
  ========================================================================== */
 /* Panel
@@ -7619,45 +7736,6 @@ iframe.uk-cover {
   /* 6 */
   overflow: hidden;
 }
-/* Height
- ========================================================================== */
-[class*='uk-height'] {
-  box-sizing: border-box;
-}
-/*
- * Only works if parent element has a height set
- */
-.uk-height-1-1 {
-  height: 100%;
-}
-/*
- * Useful to create image teasers
- */
-.uk-height-viewport {
-  min-height: 100vh;
-}
-/*
- * Pixel
- * Useful for `overflow: auto`
- */
-.uk-height-small {
-  height: 150px;
-}
-.uk-height-medium {
-  height: 300px;
-}
-.uk-height-large {
-  height: 450px;
-}
-.uk-height-max-small {
-  max-height: 150px;
-}
-.uk-height-max-medium {
-  max-height: 300px;
-}
-.uk-height-max-large {
-  max-height: 450px;
-}
 /* Responsive objects
  ========================================================================== */
 /*
@@ -7707,6 +7785,9 @@ iframe.uk-cover {
  ========================================================================== */
 .uk-border-circle {
   border-radius: 50%;
+}
+.uk-border-pill {
+  border-radius: 500px;
 }
 .uk-border-rounded {
   border-radius: 5px;
@@ -7784,6 +7865,14 @@ iframe.uk-cover {
 }
 /* Drop cap
  ========================================================================== */
+/*
+ * 1. Firefox doesn't apply `::first-letter` if the first letter is inside child elements
+ *    https://bugzilla.mozilla.org/show_bug.cgi?id=214004
+ * 2. In Firefox, a floating `::first-letter` doesn't have a line box and there for no `line-height`
+ *    https://bugzilla.mozilla.org/show_bug.cgi?id=317933
+ * 3. Caused by 1.: Edge creates two nested `::first-letter` containers, one for each selector
+ *    This doubles the `font-size` exponential when using the `em` unit.
+ */
 .uk-dropcap::first-letter,
 .uk-dropcap > p:first-of-type::first-letter {
   display: block;
@@ -7793,37 +7882,18 @@ iframe.uk-cover {
   line-height: 1;
   margin-bottom: -2px;
 }
-/* Leader
- ========================================================================== */
-.uk-leader {
-  overflow: hidden;
+/* 2 */
+@-moz-document url-prefix() {
+  .uk-dropcap::first-letter,
+  .uk-dropcap > p:first-of-type::first-letter {
+    margin-top: 1.1%;
+  }
 }
-/*
- * 1. Place element in text flow
- * 2. Never break into a new line
- * 3. Get a string back with as many repeating characters to fill the container
- * 4. Prevent wrapping. Overflowing characters will be clipped by the container
- */
-.uk-leader-fill::after {
-  /* 1 */
-  display: inline-block;
-  margin-left: 15px;
-  /* 2 */
-  width: 0;
-  /* 3 */
-  content: attr(data-fill);
-  /* 4 */
-  white-space: nowrap;
-}
-/*
- * Hide if media does not match
- */
-.uk-leader-fill.uk-leader-hide::after {
-  display: none;
-}
-/* Pass fill character to JS */
-.var-leader-fill:before {
-  content: '.';
+/* 3 */
+@supports (-ms-ime-align: auto) {
+  .uk-dropcap > p:first-of-type::first-letter {
+    font-size: 1em;
+  }
 }
 /* Logo
  ========================================================================== */
@@ -7847,29 +7917,6 @@ iframe.uk-cover {
 }
 .uk-logo-inverse {
   display: none;
-}
-/* SVG
- ========================================================================== */
-/*
- * 1. Fill all SVG elements with the current text color if no `fill` attribute is set
- * 2. Set the fill and stroke color of all SVG elements to the current text color
- * 3. Fix for uppercase attribute names in Edge. Will be fixed in Windows 10 builds 16251+
- */
-/* 1 */
-.uk-svg,
-.uk-svg:not(.uk-preserve) [fill*='#']:not(.uk-preserve),
-.uk-svg:not(.uk-preserve) [FILL*='#']:not(.uk-preserve) {
-  fill: currentcolor;
-}
-.uk-svg:not(.uk-preserve) [stroke*='#']:not(.uk-preserve),
-.uk-svg:not(.uk-preserve) [STROKE*='#']:not(.uk-preserve) {
-  stroke: currentcolor;
-}
-/*
- * Fix Firefox blurry SVG rendering: https://bugzilla.mozilla.org/show_bug.cgi?id=1046835
- */
-.uk-svg {
-  transform: translate(0, 0);
 }
 /* Disabled State
  ========================================================================== */
@@ -8858,7 +8905,7 @@ iframe.uk-cover {
  ========================================================================== */
 /*
  * Hidden
- * Can't use `display: hidden` because it's not focusable. This is accessible through keyboard.
+ * Can't use `display: none` because it's not accessible through keyboard.
  */
 .uk-visible-toggle:not(:hover):not(.uk-hover) .uk-hidden-hover:not(:focus) {
   position: absolute !important;
@@ -8870,7 +8917,7 @@ iframe.uk-cover {
 }
 /*
  * Invisible
- * Can't use `visibility: hidden` because it's not focusable. This is accessible through keyboard.
+ * Can't use `visibility: hidden` because it's not accessible through keyboard.
  */
 .uk-visible-toggle:not(:hover):not(.uk-hover) .uk-invisible-hover:not(:focus) {
   opacity: 0 !important;
@@ -9357,6 +9404,18 @@ iframe.uk-cover {
 .uk-overlay-primary .uk-divider-small::after {
   border-top-color: rgba(255, 255, 255, 0.2);
 }
+.uk-light .uk-divider-vertical::after,
+.uk-section-primary:not(.uk-preserve-color) .uk-divider-vertical::after,
+.uk-section-secondary:not(.uk-preserve-color) .uk-divider-vertical::after,
+.uk-tile-primary:not(.uk-preserve-color) .uk-divider-vertical::after,
+.uk-tile-secondary:not(.uk-preserve-color) .uk-divider-vertical::after,
+.uk-card-primary.uk-card-body .uk-divider-vertical::after,
+.uk-card-primary > :not([class*='uk-card-media']) .uk-divider-vertical::after,
+.uk-card-secondary.uk-card-body .uk-divider-vertical::after,
+.uk-card-secondary > :not([class*='uk-card-media']) .uk-divider-vertical::after,
+.uk-overlay-primary .uk-divider-vertical::after {
+  border-left-color: rgba(255, 255, 255, 0.2);
+}
 .uk-light .uk-list-divider > li:nth-child(n+2),
 .uk-section-primary:not(.uk-preserve-color) .uk-list-divider > li:nth-child(n+2),
 .uk-section-secondary:not(.uk-preserve-color) .uk-list-divider > li:nth-child(n+2),
@@ -9704,16 +9763,16 @@ iframe.uk-cover {
   color: rgba(255, 255, 255, 0.7);
   border-color: rgba(255, 255, 255, 0.7);
 }
-.uk-light .uk-input:-ms-input-placeholder,
-.uk-section-primary:not(.uk-preserve-color) .uk-input:-ms-input-placeholder,
-.uk-section-secondary:not(.uk-preserve-color) .uk-input:-ms-input-placeholder,
-.uk-tile-primary:not(.uk-preserve-color) .uk-input:-ms-input-placeholder,
-.uk-tile-secondary:not(.uk-preserve-color) .uk-input:-ms-input-placeholder,
-.uk-card-primary.uk-card-body .uk-input:-ms-input-placeholder,
-.uk-card-primary > :not([class*='uk-card-media']) .uk-input:-ms-input-placeholder,
-.uk-card-secondary.uk-card-body .uk-input:-ms-input-placeholder,
-.uk-card-secondary > :not([class*='uk-card-media']) .uk-input:-ms-input-placeholder,
-.uk-overlay-primary .uk-input:-ms-input-placeholder {
+.uk-light .uk-input::-ms-input-placeholder,
+.uk-section-primary:not(.uk-preserve-color) .uk-input::-ms-input-placeholder,
+.uk-section-secondary:not(.uk-preserve-color) .uk-input::-ms-input-placeholder,
+.uk-tile-primary:not(.uk-preserve-color) .uk-input::-ms-input-placeholder,
+.uk-tile-secondary:not(.uk-preserve-color) .uk-input::-ms-input-placeholder,
+.uk-card-primary.uk-card-body .uk-input::-ms-input-placeholder,
+.uk-card-primary > :not([class*='uk-card-media']) .uk-input::-ms-input-placeholder,
+.uk-card-secondary.uk-card-body .uk-input::-ms-input-placeholder,
+.uk-card-secondary > :not([class*='uk-card-media']) .uk-input::-ms-input-placeholder,
+.uk-overlay-primary .uk-input::-ms-input-placeholder {
   color: rgba(255, 255, 255, 0.5) !important;
 }
 .uk-light .uk-input::placeholder,
@@ -9728,16 +9787,16 @@ iframe.uk-cover {
 .uk-overlay-primary .uk-input::placeholder {
   color: rgba(255, 255, 255, 0.5);
 }
-.uk-light .uk-textarea:-ms-input-placeholder,
-.uk-section-primary:not(.uk-preserve-color) .uk-textarea:-ms-input-placeholder,
-.uk-section-secondary:not(.uk-preserve-color) .uk-textarea:-ms-input-placeholder,
-.uk-tile-primary:not(.uk-preserve-color) .uk-textarea:-ms-input-placeholder,
-.uk-tile-secondary:not(.uk-preserve-color) .uk-textarea:-ms-input-placeholder,
-.uk-card-primary.uk-card-body .uk-textarea:-ms-input-placeholder,
-.uk-card-primary > :not([class*='uk-card-media']) .uk-textarea:-ms-input-placeholder,
-.uk-card-secondary.uk-card-body .uk-textarea:-ms-input-placeholder,
-.uk-card-secondary > :not([class*='uk-card-media']) .uk-textarea:-ms-input-placeholder,
-.uk-overlay-primary .uk-textarea:-ms-input-placeholder {
+.uk-light .uk-textarea::-ms-input-placeholder,
+.uk-section-primary:not(.uk-preserve-color) .uk-textarea::-ms-input-placeholder,
+.uk-section-secondary:not(.uk-preserve-color) .uk-textarea::-ms-input-placeholder,
+.uk-tile-primary:not(.uk-preserve-color) .uk-textarea::-ms-input-placeholder,
+.uk-tile-secondary:not(.uk-preserve-color) .uk-textarea::-ms-input-placeholder,
+.uk-card-primary.uk-card-body .uk-textarea::-ms-input-placeholder,
+.uk-card-primary > :not([class*='uk-card-media']) .uk-textarea::-ms-input-placeholder,
+.uk-card-secondary.uk-card-body .uk-textarea::-ms-input-placeholder,
+.uk-card-secondary > :not([class*='uk-card-media']) .uk-textarea::-ms-input-placeholder,
+.uk-overlay-primary .uk-textarea::-ms-input-placeholder {
   color: rgba(255, 255, 255, 0.5) !important;
 }
 .uk-light .uk-textarea::placeholder,
@@ -9921,6 +9980,30 @@ iframe.uk-cover {
 .uk-card-secondary > :not([class*='uk-card-media']) .uk-form-label,
 .uk-overlay-primary .uk-form-label {
   color: #fff;
+}
+.uk-light .uk-form-icon,
+.uk-section-primary:not(.uk-preserve-color) .uk-form-icon,
+.uk-section-secondary:not(.uk-preserve-color) .uk-form-icon,
+.uk-tile-primary:not(.uk-preserve-color) .uk-form-icon,
+.uk-tile-secondary:not(.uk-preserve-color) .uk-form-icon,
+.uk-card-primary.uk-card-body .uk-form-icon,
+.uk-card-primary > :not([class*='uk-card-media']) .uk-form-icon,
+.uk-card-secondary.uk-card-body .uk-form-icon,
+.uk-card-secondary > :not([class*='uk-card-media']) .uk-form-icon,
+.uk-overlay-primary .uk-form-icon {
+  color: rgba(255, 255, 255, 0.5);
+}
+.uk-light .uk-form-icon:hover,
+.uk-section-primary:not(.uk-preserve-color) .uk-form-icon:hover,
+.uk-section-secondary:not(.uk-preserve-color) .uk-form-icon:hover,
+.uk-tile-primary:not(.uk-preserve-color) .uk-form-icon:hover,
+.uk-tile-secondary:not(.uk-preserve-color) .uk-form-icon:hover,
+.uk-card-primary.uk-card-body .uk-form-icon:hover,
+.uk-card-primary > :not([class*='uk-card-media']) .uk-form-icon:hover,
+.uk-card-secondary.uk-card-body .uk-form-icon:hover,
+.uk-card-secondary > :not([class*='uk-card-media']) .uk-form-icon:hover,
+.uk-overlay-primary .uk-form-icon:hover {
+  color: rgba(255, 255, 255, 0.7);
 }
 .uk-light .uk-button-default,
 .uk-section-primary:not(.uk-preserve-color) .uk-button-default,
@@ -11351,7 +11434,7 @@ iframe.uk-cover {
 .uk-card-secondary > :not([class*='uk-card-media']) .uk-accordion-title:focus,
 .uk-overlay-primary .uk-accordion-title:hover,
 .uk-overlay-primary .uk-accordion-title:focus {
-  color: #354b60;
+  color: rgba(255, 255, 255, 0.7);
 }
 .uk-light .uk-iconnav > * > a,
 .uk-section-primary:not(.uk-preserve-color) .uk-iconnav > * > a,
@@ -11517,28 +11600,28 @@ iframe.uk-cover {
 .uk-overlay-primary .uk-logo-inverse {
   display: inline;
 }
-.uk-light .uk-accordion-title::after,
-.uk-section-primary:not(.uk-preserve-color) .uk-accordion-title::after,
-.uk-section-secondary:not(.uk-preserve-color) .uk-accordion-title::after,
-.uk-tile-primary:not(.uk-preserve-color) .uk-accordion-title::after,
-.uk-tile-secondary:not(.uk-preserve-color) .uk-accordion-title::after,
-.uk-card-primary.uk-card-body .uk-accordion-title::after,
-.uk-card-primary > :not([class*='uk-card-media']) .uk-accordion-title::after,
-.uk-card-secondary.uk-card-body .uk-accordion-title::after,
-.uk-card-secondary > :not([class*='uk-card-media']) .uk-accordion-title::after,
-.uk-overlay-primary .uk-accordion-title::after {
+.uk-light .uk-accordion-title::before,
+.uk-section-primary:not(.uk-preserve-color) .uk-accordion-title::before,
+.uk-section-secondary:not(.uk-preserve-color) .uk-accordion-title::before,
+.uk-tile-primary:not(.uk-preserve-color) .uk-accordion-title::before,
+.uk-tile-secondary:not(.uk-preserve-color) .uk-accordion-title::before,
+.uk-card-primary.uk-card-body .uk-accordion-title::before,
+.uk-card-primary > :not([class*='uk-card-media']) .uk-accordion-title::before,
+.uk-card-secondary.uk-card-body .uk-accordion-title::before,
+.uk-card-secondary > :not([class*='uk-card-media']) .uk-accordion-title::before,
+.uk-overlay-primary .uk-accordion-title::before {
   background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%2213%22%20height%3D%2213%22%20viewBox%3D%220%200%2013%2013%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%0A%20%20%20%20%3Crect%20fill%3D%22rgba%28255,%20255,%20255,%200.7%29%22%20width%3D%2213%22%20height%3D%221%22%20x%3D%220%22%20y%3D%226%22%20%2F%3E%0A%20%20%20%20%3Crect%20fill%3D%22rgba%28255,%20255,%20255,%200.7%29%22%20width%3D%221%22%20height%3D%2213%22%20x%3D%226%22%20y%3D%220%22%20%2F%3E%0A%3C%2Fsvg%3E");
 }
-.uk-light .uk-open > .uk-accordion-title::after,
-.uk-section-primary:not(.uk-preserve-color) .uk-open > .uk-accordion-title::after,
-.uk-section-secondary:not(.uk-preserve-color) .uk-open > .uk-accordion-title::after,
-.uk-tile-primary:not(.uk-preserve-color) .uk-open > .uk-accordion-title::after,
-.uk-tile-secondary:not(.uk-preserve-color) .uk-open > .uk-accordion-title::after,
-.uk-card-primary.uk-card-body .uk-open > .uk-accordion-title::after,
-.uk-card-primary > :not([class*='uk-card-media']) .uk-open > .uk-accordion-title::after,
-.uk-card-secondary.uk-card-body .uk-open > .uk-accordion-title::after,
-.uk-card-secondary > :not([class*='uk-card-media']) .uk-open > .uk-accordion-title::after,
-.uk-overlay-primary .uk-open > .uk-accordion-title::after {
+.uk-light .uk-open > .uk-accordion-title::before,
+.uk-section-primary:not(.uk-preserve-color) .uk-open > .uk-accordion-title::before,
+.uk-section-secondary:not(.uk-preserve-color) .uk-open > .uk-accordion-title::before,
+.uk-tile-primary:not(.uk-preserve-color) .uk-open > .uk-accordion-title::before,
+.uk-tile-secondary:not(.uk-preserve-color) .uk-open > .uk-accordion-title::before,
+.uk-card-primary.uk-card-body .uk-open > .uk-accordion-title::before,
+.uk-card-primary > :not([class*='uk-card-media']) .uk-open > .uk-accordion-title::before,
+.uk-card-secondary.uk-card-body .uk-open > .uk-accordion-title::before,
+.uk-card-secondary > :not([class*='uk-card-media']) .uk-open > .uk-accordion-title::before,
+.uk-overlay-primary .uk-open > .uk-accordion-title::before {
   background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%2213%22%20height%3D%2213%22%20viewBox%3D%220%200%2013%2013%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%0A%20%20%20%20%3Crect%20fill%3D%22rgba%28255,%20255,%20255,%200.7%29%22%20width%3D%2213%22%20height%3D%221%22%20x%3D%220%22%20y%3D%226%22%20%2F%3E%0A%3C%2Fsvg%3E");
 }
 /* ========================================================================
@@ -11664,6 +11747,19 @@ table.AdminDataTable:not(.uk-table) .pw-table-sort-value {
   opacity: 0.4;
   font-weight: normal;
 }
+.pw-table-resizable td,
+.pw-table-resizable th {
+  border-left-style: solid;
+  border-left-color: #e5e5e5;
+  border-left-width: 1px;
+}
+.pw-table-resizable td:first-child,
+.pw-table-resizable th:first-child {
+  border-left: none;
+}
+.pw-table-resizable .tablesorter-resizable-handle {
+  /*margin-left: 37px;*/
+}
 .uk-tab > li.uk-active {
   background: #fff;
 }
@@ -11685,6 +11781,40 @@ table.AdminDataTable:not(.uk-table) .pw-table-sort-value {
 b,
 b b {
   font-weight: bold;
+}
+.uk-form-small:not(textarea):not([multiple]) {
+  height: 30px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.uk-form-large:not(textarea):not([multiple]) {
+  height: 55px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.InputfieldFormSmallInputs input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=button]):not([type=submit]):not([type=range]):not(.uk-form-large):not(.uk-form-medium),
+.InputfieldFormSmallInputs select:not([multiple]):not(.uk-form-large):not(.uk-form-medium) {
+  font-size: 0.875rem;
+  height: 30px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.InputfieldFormSmallInputs textarea:not(.uk-form-large):not(.uk-form-medium) {
+  font-size: 0.875rem;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.InputfieldFormLargeInputs input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=button]):not([type=submit]):not([type=range]):not(.uk-form-small):not(.uk-form-medium),
+.InputfieldFormLargeInputs select:not([multiple]):not(.uk-form-small):not(.uk-form-medium) {
+  font-size: 1.25rem;
+  height: 55px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.InputfieldFormLargeInputs textarea:not(.uk-form-small):not(.uk-form-medium) {
+  font-size: 1.25rem;
+  padding-left: 12px;
+  padding-right: 12px;
 }
 /* Layout helpers
 ----------------------------------*/
@@ -13346,26 +13476,23 @@ body .ui-tooltip {
   /* 2 */
   border: none;
   /* 3 */
-  border-radius: 0;
-  /* 4 */
   overflow: visible;
-  /* 5 */
+  /* 4 */
   font: inherit;
   color: inherit;
-  /* 6 */
+  /* 5 */
   text-transform: none;
-  /* 7 */
+  /* 6 */
   display: inline-block;
   box-sizing: border-box;
   padding: 0 30px;
   vertical-align: middle;
-  /* 8 */
+  /* 7 */
   line-height: 38px;
-  /* 9 */
+  /* 8 */
   text-align: center;
-  /* 10 */
+  /* 9 */
   text-decoration: none;
-  text-transform: capitalize;
   transition: 0.1s ease-in-out;
   transition-property: color, background-color, border-color;
   background-color: #3eb998;
@@ -13374,6 +13501,9 @@ body .ui-tooltip {
   color: #fff;
   font-size: 16px;
   border-radius: 4px;
+}
+html[lang=en] .ui-button {
+  text-transform: capitalize;
 }
 .ui-button.ui-priority-secondary,
 .ui-button.ui-state-default.ui-priority-secondary,
@@ -13756,7 +13886,7 @@ a.tooltip:hover {
   border-top: none !important;
 }
 .ui-menu .ui-menu-item i.fa {
-  margin-right: 2px;
+  margin-right: 8px;
   color: #97aab4;
 }
 .ui-menu .ui-menu-item a {
@@ -13770,6 +13900,7 @@ a.tooltip:hover {
 }
 .ui-menu .ui-menu-item a i.fa {
   margin-left: -2px;
+  /*padding-left: 5px;*/
   color: #97aab4;
 }
 .ui-menu .ui-menu-item a.uk-active,
@@ -13873,10 +14004,7 @@ a.tooltip:hover {
   line-height: 1.4;
 }
 .PageList .ProcessListerTable tr.open {
-  background-color: #f0f3f7;
-}
-.PageList .ProcessListerTable tr.open > td:first-child {
-  padding-left: 10px !important;
+  background: linear-gradient(to right, #fff 0%, #f0f3f7 100%);
 }
 .PageList .ProcessListerTable tr.open > td:first-child a.actions_toggle {
   color: #d21846;
@@ -14199,6 +14327,17 @@ body:not(.pw-narrow-width) .PageList .PageListItem.PageListNoChildren > a.PageLi
 .Inputfield select {
   max-width: 100%;
 }
+.Inputfield .uk-select:not(.InputfieldSetWidth):not(.InputfieldMaxWidth) {
+  width: auto;
+}
+.Inputfield .uk-select:not([multiple]):not([size]) {
+  padding-right: 30px !important;
+}
+.Inputfield .InputfieldContent table td .uk-select:not(.InputfieldSetWidth),
+.Inputfield.InputfieldColumnWidth > .InputfieldContent .uk-select:not(.InputfieldSetWidth) {
+  width: 100%;
+  padding-right: initial;
+}
 .Inputfield textarea:not(.uk-textarea) {
   /* 1 */
   box-sizing: border-box;
@@ -14229,6 +14368,11 @@ body:not(.pw-narrow-width) .PageList .PageListItem.PageListNoChildren > a.PageLi
 }
 .Inputfield input[size] {
   width: auto;
+}
+@media screen and (max-width: 767px) {
+  body.AdminThemeUikitNoGrid .InputfieldColumnWidth {
+    width: 100% !important;
+  }
 }
 .Inputfields .InputfieldIsOffset:not(.InputfieldColumnWidth) {
   margin-top: 20px;
@@ -14333,8 +14477,14 @@ table .InputfieldIsOffset,
   background: #fff;
   padding: 1px 20px 23px 20px;
 }
+.InputfieldContent > .InputfieldError {
+  display: block;
+  padding: 5px 12px 5px 5px;
+}
 .InputfieldContent > textarea,
 .LanguageSupport > textarea,
+.InputfieldContent > select.InputfieldMaxWidth,
+.LanguageSupport > select.InputfieldMaxWidth,
 .InputfieldContent > input.InputfieldMaxWidth,
 .LanguageSupport > input.InputfieldMaxWidth {
   width: 100%;
@@ -14463,8 +14613,12 @@ table.AdminDataTable .Inputfields .Inputfield .InputfieldContent {
   padding: 0;
 }
 /*** Inputfield color support ********************************************************/
-.InputfieldIsPrimary:not(.InputfieldNoBorder):not(.InputfieldHideBorder) {
-  outline: 1px solid #d0dbe7 !important;
+.InputfieldIsPrimary:not(.InputfieldNoBorder) {
+  /*
+    &:not(.InputfieldHideBorder) {
+      outline: @pw-inputfield-border-primary !important;
+    }
+    */
 }
 .InputfieldIsPrimary:not(.InputfieldNoBorder) > .InputfieldHeader,
 .InputfieldIsPrimary:not(.InputfieldNoBorder) > .InputfieldContent {
@@ -14481,8 +14635,12 @@ table.AdminDataTable .Inputfields .Inputfield .InputfieldContent {
 .InputfieldIsSecondary > .InputfieldContent {
   background: #fafbfc;
 }
-.InputfieldIsSuccess:not(.InputfieldNoBorder):not(.InputfieldHideBorder) {
-  outline: 1px solid #b3dde9 !important;
+.InputfieldIsSuccess:not(.InputfieldNoBorder) {
+  /*
+    &:not(.InputfieldHideBorder) {
+      outline: @pw-inputfield-border-success !important;
+    }
+    */
 }
 .InputfieldIsSuccess:not(.InputfieldNoBorder) > .InputfieldHeader,
 .InputfieldIsSuccess:not(.InputfieldNoBorder) > .InputfieldContent {
@@ -14491,8 +14649,12 @@ table.AdminDataTable .Inputfields .Inputfield .InputfieldContent {
 .InputfieldIsSuccess > .InputfieldHeader {
   color: #8bccde;
 }
-.InputfieldIsHighlight:not(.InputfieldNoBorder):not(.InputfieldHideBorder) {
-  outline: 1px solid #d9e1ea !important;
+.InputfieldIsHighlight:not(.InputfieldNoBorder) {
+  /*
+    &:not(.InputfieldHideBorder) {
+      outline: @pw-inputfield-border-highlight !important;
+    }
+    */
 }
 .InputfieldIsHighlight:not(.InputfieldNoBorder) > .InputfieldHeader,
 .InputfieldIsHighlight:not(.InputfieldNoBorder) > .InputfieldContent {
@@ -14501,8 +14663,12 @@ table.AdminDataTable .Inputfields .Inputfield .InputfieldContent {
 .InputfieldIsHighlight > .InputfieldHeader {
   color: inherit;
 }
-.InputfieldIsWarning:not(.InputfieldNoBorder):not(.InputfieldHideBorder) {
-  outline: 1px solid #ffe091 !important;
+.InputfieldIsWarning:not(.InputfieldNoBorder) {
+  /*
+    &:not(.InputfieldHideBorder) {
+      outline: @pw-inputfield-border-warning !important;
+    }
+    */
 }
 .InputfieldIsWarning:not(.InputfieldNoBorder) > .InputfieldHeader,
 .InputfieldIsWarning:not(.InputfieldNoBorder) > .InputfieldContent {
@@ -14511,10 +14677,14 @@ table.AdminDataTable .Inputfields .Inputfield .InputfieldContent {
 .InputfieldIsWarning > .InputfieldHeader {
   color: #354b60;
 }
-.InputfieldStateError:not(.InputfieldNoBorder):not(.InputfieldHideBorder),
-.InputfieldIsDanger:not(.InputfieldNoBorder):not(.InputfieldHideBorder),
-.InputfieldIsError:not(.InputfieldNoBorder):not(.InputfieldHideBorder) {
-  outline: 1px solid #d64156 !important;
+.InputfieldStateError:not(.InputfieldNoBorder),
+.InputfieldIsDanger:not(.InputfieldNoBorder),
+.InputfieldIsError:not(.InputfieldNoBorder) {
+  /*
+    &:not(.InputfieldHideBorder) {
+     outline: @pw-inputfield-border-danger !important;
+    }
+    */
 }
 .InputfieldStateError:not(.InputfieldNoBorder) > .InputfieldHeader,
 .InputfieldIsDanger:not(.InputfieldNoBorder) > .InputfieldHeader,
@@ -15009,6 +15179,9 @@ body .ProDraftsNotice {
 .ProcessField .Inputfield_columnWidth .InputfieldColumnWidthSlider {
   top: 14px;
 }
+.ProcessPageEdit.modal form#ProcessPageEdit.ProcessPageEditSingleField {
+  margin-top: -20px;
+}
 html,
 body {
   background: #fff;
@@ -15023,9 +15196,12 @@ body {
 em {
   color: inherit;
 }
+/*
+// removed because it causes horiz scrollbar at small mobile widths
 #pw-mastheads {
   position: relative;
 }
+*/
 #pw-masthead,
 #pw-masthead-mobile {
   height: 73px;
@@ -15130,6 +15306,11 @@ body.pw-layout-sidenav-side #pw-sidenav-bar {
     float: none;
   }
 }
+@media screen and (max-width: 767px) {
+  body:not(.pw-ready) #pw-masthead > * {
+    display: none;
+  }
+}
 .pw-sidebar-nav > li {
   border-top: 1px solid #d5dfe8;
   padding: 5px 0;
@@ -15183,25 +15364,35 @@ body.pw-layout-sidenav-side #pw-sidenav-bar {
   padding: 0;
   line-height: 1.1em;
 }
+.pw-sidebar-nav > li .pw-avatar {
+  height: 30px;
+  border-radius: 15px;
+}
 .pw-layout-sidenav-tree .ProDraftsNotice {
   margin-top: 20px;
 }
-.ProcessLogin #pw-masthead {
+body.pw-guest #pw-masthead {
   display: none;
 }
-.ProcessLogin #pw-masthead-mobile {
+body.pw-guest #pw-masthead-mobile {
   display: block !important;
 }
-.ProcessLogin #pw-content-head {
+body.pw-guest #pw-content-head {
   display: none;
 }
-.ProcessLogin #pw-content-body {
+body.pw-guest #pw-content-body {
   text-align: center;
 }
-.ProcessLogin .pw-notices > li > .uk-container {
+body.pw-guest .pw-notices > li > .uk-container {
   text-align: center;
 }
-.ProcessLogin .pw-notices .notice-remove {
+body.pw-guest .pw-notices .notice-remove {
+  display: none;
+}
+body.pw-guest hr {
+  display: none;
+}
+body.pw-guest footer {
   display: none;
 }
 .ProcessLogin #ProcessLoginForm {
@@ -15235,20 +15426,11 @@ body.pw-layout-sidenav-side #pw-sidenav-bar {
 .ProcessLogin #ProcessLoginForm #wrap_Inputfield_login_submit .ui-button {
   margin: 0;
 }
-.ProcessLogin hr {
-  display: none;
-}
-.ProcessLogin footer {
-  display: none;
-}
 body.pw-init .pw-dropdown-menu,
 body.pw-init .pw-button-dropdown {
   display: none;
 }
 body.pw-init .WireTab {
-  display: none;
-}
-body.pw-init #pw-masthead > * {
   display: none;
 }
 ul.uk-navbar-nav ul {
@@ -15422,6 +15604,10 @@ ul.uk-navbar-nav ul {
   left: 40%;
   z-index: 99;
 }
+#pw-masthead .uk-navbar-nav > li > a.hover:after,
+#pw-masthead .uk-navbar-nav > li > a:hover:after {
+  z-index: 200;
+}
 #pw-masthead .pw-search-form .pw-search-input {
   color: #8d939e;
   background: transparent;
@@ -15522,17 +15708,31 @@ html.pw-sidebar-frame #main,
 html.pw-sidebar-frame body #main {
   background: #f0f3f7;
 }
-.Inputfields input:not([type=submit]):not([type=file]):not([type=checkbox]):not([type=radio]),
-.Inputfields textarea {
-  background: #f0f3f7;
+.Inputfields input:not([type=submit]):not([type=file]):not([type=checkbox]):not([type=radio]):not(.uk-form-blank),
+.Inputfields textarea:not(.uk-form-blank) {
+  background-color: #f0f3f7;
   border: 1px solid;
   border-color: #b1c3d4 #cbd7e3 #cbd7e3 #cbd7e3;
   -webkit-appearance: none;
 }
-.Inputfields input:not([type=submit]):not([type=file]):not([type=checkbox]):not([type=radio]):focus,
-.Inputfields textarea:focus {
-  background: #f7f8fb;
+.Inputfields input:not([type=submit]):not([type=file]):not([type=checkbox]):not([type=radio]):not(.uk-form-blank):focus,
+.Inputfields textarea:not(.uk-form-blank):focus {
+  background-color: #f7f8fb;
   border-color: #b1c3d4 #cbd7e3 #cbd7e3 #cbd7e3;
+}
+.Inputfields select.uk-select:not(.uk-form-blank) {
+  background-color: #f0f3f7;
+  border: 1px solid;
+  border-color: #cbd7e3;
+  -webkit-appearance: none;
+}
+.Inputfields select.uk-select:not(.uk-form-blank):focus {
+  background-color: #f7f8fb;
+  border-color: #cbd7e3;
+}
+.Inputfields input.uk-form-blank:focus,
+.Inputfields textarea.uk-form-blank:focus {
+  background-color: #f7f8fb;
 }
 img.pw-logo {
   max-height: 40px;

@@ -1,8 +1,10 @@
-
 .Inputfields .InputfieldRepeater {
 	
 	& > .InputfieldContent > ul.Inputfields { 
 		margin-bottom: 1em;
+		&:last-child {
+			margin-bottom: 0;
+		}
 	}
 	
 	.InputfieldRepeaterItem  > .InputfieldHeader {
@@ -35,6 +37,8 @@
 				white-space: nowrap;
 				height: 100%;
 
+				
+				.InputfieldRepeaterSettingsToggle,
 				.InputfieldRepeaterClone,
 				.InputfieldRepeaterToggle,
 				.InputfieldRepeaterTrash,
@@ -51,6 +55,9 @@
 				.InputfieldRepeaterClone {
 					margin-right: 1em;
 				}
+				.InputfieldRepeaterSettingsToggle {
+					margin-right: 1em;
+				}
 				.pw-icon-disabled {
 					opacity: 0.3;	
 				}
@@ -62,6 +69,10 @@
 			}
 		}
 		
+	}
+	
+	.InputfieldStateCollapsed .InputfieldRepeaterSettingsToggle {
+		display: none;
 	}
 		
 	.InputfieldRepeaterItem:not(.InputfieldRepeaterDeletePending) {
@@ -127,6 +138,7 @@
 }
 
 .InputfieldRepeater {
+	z-index: 1; 	
 	
 	.InputfieldWrapper,
 	.InputfieldWrapper > .Inputfields {
@@ -140,9 +152,7 @@
 
 	.InputfieldRepeaterAddItem input {
 		// count of added items hidden
-		position: absolute;
-		left: -9999px;
-		top: 0;
+		display: none !important;
 	}
 
 	ul.Inputfields + .InputfieldRepeaterAddItem {

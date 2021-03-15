@@ -29,7 +29,7 @@ class SelectableOptionArray extends WireArray {
 	/**
 	 * Field these options apply to (always applicable)
 	 * 
-	 * @var null
+	 * @var Field|null
 	 * 
 	 */	
 	protected $field = null;
@@ -196,5 +196,80 @@ class SelectableOptionArray extends WireArray {
 		}
 		return $isIdentical;
 	}
+
+	/**
+	 * Get SelectableOption by $property matching $value, or boolean false if not found
+	 * 
+	 * @param string $property May be "title", "value" or "id"
+	 * @param string|int $value
+	 * @return bool|SelectableOption
+	 * 
+	 */
+	protected function getOptionByProperty($property, $value) {
+		$match = false;
+		foreach($this as $option) {
+			$v = $option->getProperty($property);
+			if($v !== $value) continue;
+			$match = $option;
+			break;
+		}
+		return $match;
+	}
+
+	/**
+	 * Is the given value present in these selectable options? 
+	 * 
+	 * @param string $value
+	 * @return SelectableOption|bool Returns SelectableOption if found, or boolean false if not
+	 * 
+	 */
+	public function hasValue($value) {
+		return $this->getOptionByProperty('value', $value);
+	}
+
+	/**
+	 * Is the given title present in these selectable options?
+	 * 
+	 * @param string $title
+	 * @return SelectableOption|bool Returns SelectableOption if found, or boolean false if not
+	 * 
+	 */
+	public function hasTitle($title) {
+		return $this->getOptionByProperty('title', $title); 
+	}
+
+	/**
+	 * Is the given id present in these selectable options?
+	 *
+	 * @param int $id
+	 * @return SelectableOption|bool Returns SelectableOption if found, or boolean false if not
+	 *
+	 */
+	public function hasID($id) {
+		return $this->getOptionByProperty('id', (int) $id);
+	}
+	
+	/**
+	 * Return debug info for one item from this WireArray
+	 *
+	 * #pw-internal
+	 *
+	 * @param mixed $item
+	 * @return mixed|null|string
+	 *
+	 */
+	public function debugInfoItem($item) {
+		if($item instanceof SelectableOption) $item = $item->debugInfoSmall();
+		return $item;
+	}
+	
+	public function __debugInfo() {
+		$info = parent::__debugInfo();
+		$info['of'] = (int) $this->of;
+		if($this->page) $info['page'] = $this->page->path();
+		if($this->field) $info['field'] = $this->field->name;
+		return $info;
+	}
+
 
 }

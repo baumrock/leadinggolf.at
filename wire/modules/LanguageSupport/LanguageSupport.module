@@ -314,7 +314,9 @@ class LanguageSupport extends WireData implements Module, ConfigurableModule {
 
 		/** @var Inputfield $inputfield */
 		$inputfield = $event->object; 
-		$user = $this->wire('user');
+		if(!$inputfield->useLanguages) return;
+		
+		$user = $this->wire()->user;
 		$userLanguage = $user->language;
 		if(!$userLanguage) return;
 
@@ -439,6 +441,7 @@ class LanguageSupport extends WireData implements Module, ConfigurableModule {
 				// default language
 				$newID = $id;
 				$o = $event->return; 
+				$inputfield->attr('id', $newID);
 
 			} else {
 				// non-default language
@@ -486,8 +489,8 @@ class LanguageSupport extends WireData implements Module, ConfigurableModule {
 		$inputfield = $event->object;
 		$replace = false; 
 		
-		if($inputfield->getSetting('useLanguages')) {
-			// native multi-language field
+		if($inputfield->getSetting('useLanguages') || $inputfield->getSetting('hasLanguages')) { 
+			// multi-language field
 			$this->hookInputfieldBeforeRender($event); // ensures default language values are populated
 			if(!$this->wire('languages')->editable($this->defaultLanguagePage)) $replace = true; 
 			
@@ -618,6 +621,9 @@ class LanguageSupport extends WireData implements Module, ConfigurableModule {
 				}
 				$inputfield->set('value' . $language->id, $languageValue); 	
 			}
+			
+			// following this hookInputfieldBeforeRender() completes the process after
+			// Fieldgroup::getPageInputfields() which sets the value attribute of Inputfields
 		}
 
 		$event->return = $inputfield; 

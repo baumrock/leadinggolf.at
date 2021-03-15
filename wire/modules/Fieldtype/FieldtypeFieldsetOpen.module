@@ -34,22 +34,15 @@ class FieldtypeFieldsetOpen extends Fieldtype {
 	}
 
 	/**
-	 * Have the hooks been setup for this Fieldset?
-	 *
-	 */
-	protected static $hooked = false;
-
-	/**
 	 * Setup hooks to minotor when Fields are added and deleted
 	 *
 	 * But only do it once so that we don't have the same hooks setup when there are multiple Fieldsets
 	 *
 	 */
 	public function init() {
-		if(!self::$hooked && ($this->process == 'ProcessField' || $this->process = 'ProcessTemplate')) {
+		if($this->process == 'ProcessField' || $this->process = 'ProcessTemplate') {
 			$this->addProcessHooks();
 		}
-		self::$hooked = true;
 	}
 
 	/**
@@ -70,7 +63,7 @@ class FieldtypeFieldsetOpen extends Fieldtype {
 
 	public function getInputfield(Page $page, Field $field) {
 		$inputfield = $this->wire(new InputfieldFieldsetOpen());
-		$inputfield->class = $this->className();
+		$inputfield->class = $this->className() . ' InputfieldFieldset';
 		return $inputfield; 
 	}
 
@@ -121,6 +114,60 @@ class FieldtypeFieldsetOpen extends Fieldtype {
 	}
 
 	/**
+	 * Check that Fieldgroup has matching open/close fieldsets and in correct order
+	 * 
+	 * @param Fieldgroup $fieldgroup
+	 * @return bool
+	 * @since 3.0.164
+	 * 
+	 */
+	public function checkFieldgroupFieldsets(Fieldgroup $fieldgroup) {
+		
+		list($openers, $closers, $isChanged) = array(array(), array(), false);
+
+		foreach($fieldgroup as $field) {
+			/** @var Fieldtype $fieldtype */
+			if(!$field->type instanceof FieldtypeFieldsetOpen) continue;
+			if($field->type instanceof FieldtypeFieldsetClose) {
+				if(!strpos($field->name, self::fieldsetCloseIdentifier)) continue;
+				$name = substr($field->name, 0, -1 * strlen(self::fieldsetCloseIdentifier));
+				$closers[$name] = $field;
+			} else if(!isset($closers[$field->name])) {
+				// ensure opener comes before closer, otherwise only closer remains
+				$openers[$field->name] = $field;
+			}
+		}
+
+		if(count($openers) === count($closers)) return true;
+
+		foreach($openers as $name => $opener) {
+			/** @var Field $opener */
+			if(isset($closers[$name])) continue;
+			$closer = $this->getFieldsetCloseField($opener);
+			if($closer) {
+				$fieldgroup->insertAfter($closer, $opener);
+			} else {
+				$fieldgroup->remove($opener);
+			}
+			$isChanged = true;
+		}
+		
+		foreach($closers as $name => $closer) {
+			/** @var Field $closer */
+			if(isset($openers[$name])) continue;
+			$opener = $this->getFieldsetOpenField($closer); 
+			if($opener) {
+				$fieldgroup->insertBefore($opener, $closer); 
+			} else {
+				$fieldgroup->remove($closer);
+			}
+			$isChanged = true;
+		}
+		
+		return $isChanged;
+	}
+
+	/**
 	 * Get the Field that closes/terminates the given Fieldset field
 	 * 
 	 * @param Field $field
@@ -130,7 +177,7 @@ class FieldtypeFieldsetOpen extends Fieldtype {
 	 */
 	public function getFieldsetCloseField(Field $field, $createIfNotExists = false) {
 		
-		if(!$this->isFieldset($field)) return;
+		if(!$this->isFieldset($field)) return null;
 	
 		$name = $field->name . self::fieldsetCloseIdentifier;
 		$closer = $this->wire('fields')->get($name); 
@@ -160,6 +207,35 @@ class FieldtypeFieldsetOpen extends Fieldtype {
 		}
 		
 		return $closer; 
+	}
+	
+	/**
+	 * Get the Field that opens the given FieldsetClose field
+	 *
+	 * @param Field $field
+	 * @return null|Field of type FieldtypeFieldsetOpen, if found
+	 * @since 3.0.164
+	 *
+	 */
+	public function getFieldsetOpenField(Field $field) {
+
+		if(!$field->type instanceof FieldtypeFieldsetClose) return null;
+		if(!strpos($field->name, self::fieldsetCloseIdentifier)) return null;
+
+		$name = substr($field->name, 0, -1 * strlen(self::fieldsetCloseIdentifier));
+		$opener = $this->wire()->fields->get($name);
+
+		if($opener) return $opener;
+
+		foreach($this->wire()->fields as $f) {
+			if(!$f->type instanceof FieldtypeFieldsetOpen) continue;
+			$closeFieldID = (int) $f->get('closeFieldID');
+			if($closeFieldID != $field->id) continue;
+			$opener = $f;
+			break;
+		}
+
+		return $opener;
 	}
 
 	/**
@@ -257,14 +333,14 @@ class FieldtypeFieldsetOpen extends Fieldtype {
 		// avoid ending up in infinite loop, since FieldtypeFieldsetClose extends this
 		if($this instanceof FieldtypeFieldsetClose) return;
 		// rename the _END field to match this one
-		$fields = $this->wire('fields');
+		$fields = $this->wire()->fields;
+		$oldName = $prevName . self::fieldsetCloseIdentifier;
+		$newName = $field->name . self::fieldsetCloseIdentifier;
 		$closer = $this->getFieldsetCloseField($field); 
-		if(!$closer) {
-			$closer = $fields->get($prevName . self::fieldsetCloseIdentifier);
-			if($closer) {
-				$closer->name = $field->name . self::fieldsetCloseIdentifier;
-				$fields->save($closer);
-			}
+		if(!$closer) $closer = $fields->get($oldName);
+		if($closer && $closer->name != $newName) {
+			$closer->name = $newName;
+			$fields->save($closer);
 		}
 		parent::___renamedField($field, $prevName); 
 	}

@@ -5,15 +5,34 @@
  *
  * #pw-summary Specific text and markup tools for ProcessWire $sanitizer and elsewhere.
  *
- * ProcessWire 3.x, Copyright 2018 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
  * 
  * @since 3.0.101
- *
+ * 
+ * @method array wordAlternates($word, array $options = array()) Protected method for hooking purposes only #pw-hooker #pw-internal
+ * @method string wordStem($word) Protected method for hooking purposes only #pw-hooker #pw-internal
  *
  */
 
 class WireTextTools extends Wire {
+
+	/**
+	 * mbstring support?
+	 * 
+	 * @var bool
+	 * 
+	 */
+	protected $mb;
+
+	/**
+	 * Construct
+	 * 
+	 */
+	public function __construct() {
+		$this->mb = function_exists("mb_internal_encoding");
+		parent::__construct();
+	}
 	
 	/**
 	 * Convert HTML markup to readable text
@@ -29,28 +48,44 @@ class WireTextTools extends Wire {
 	 *  - `splitBlocks` (string): String to split paragraph and header elements. (default="\n\n")
 	 *  - `convertEntities` (bool): Convert HTML entities to plain text equivalents? (default=true)
 	 *  - `listItemPrefix` (string): Prefix for converted list item `<li>` elements. (default='• ')
+	 *  - `linksToUrls` (bool): Convert links to "(url)" rather than removing entirely? (default=true) Since 3.0.132
+	 *  - `uppercaseHeadlines` (bool): Convert headline tags to uppercase? (default=false) Since 3.0.132
+	 *  - `underlineHeadlines` (bool): Underline headlines with "=" or "-"? (default=true) Since 3.0.132
+	 *  - `collapseSpaces` (bool): Collapse extra/redundant extra spaces to single space? (default=true) Since 3.0.132
 	 *  - `replacements` (array): Associative array of strings to manually replace. (default=['&nbsp;' => ' '])
 	 * @return string
 	 *
 	 */
 	public function markupToText($str, array $options = array()) {
-
+		
 		$defaults = array(
 			'keepTags' => array(), 
+			'linksToUrls' => true, // convert links to just URL rather than removing entirely
 			'splitBlocks' => "\n\n",
+			'uppercaseHeadlines' => false, 
+			'underlineHeadlines' => true, 
 			'convertEntities' => true, 
 			'listItemPrefix' => '• ', 
+			'preIndent' => '', // indent for text within a <pre>
+			'collapseSpaces' => true,
 			'replacements' => array(
 				'&nbsp;' => ' '
 			),
+			'finishReplacements' => array(), // replacements applied at very end (internal)
 		);
 
+		// merge options using arrays
+		foreach(array('replacements') as $key) {
+			if(!isset($options[$key])) continue;
+			$options[$key] = array_merge($defaults[$key], $options[$key]);
+		}
+		
 		$options = array_merge($defaults, $options);
 
 		if(strpos($str, '>') !== false) {
 
 			// strip out everything up to and including </head>, if present
-			if(strpos($str, '</head>') !== false) list(, $str) = explode('</head>', $str); 
+			if(strpos($str, '</head>') !== false) list(, $str) = explode('</head>', $str);
 
 			// ensure tags are separated by whitespace
 			$str = str_replace('><', '> <', $str);
@@ -66,29 +101,81 @@ class WireTextTools extends Wire {
 			}
 
 			// ensure paragraphs and headers are followed by two newlines
-			if(stripos($str, '</p>') || stripos($str, '</h')) {
-				$str = preg_replace('!(</(?:p|h\d)>)!i', '$1' . $options['splitBlocks'], $str);
+			if(stripos($str, '</p') || stripos($str, '</h') || stripos($str, '</li') || stripos($str, '</bl') || stripos($str, '</div')) {
+				$str = preg_replace('!(</(?:p|h\d|ul|ol|pre|blockquote|div)>)!i', '$1' . $options['splitBlocks'], $str);
 			}
 
 			// ensure list items are on their own line and prefixed with a bullet
 			if(stripos($str, '<li') !== false) {
-				$prefix = in_array('li', $options['keepTags']) ? '' : $options['listItemPrefix']; 
-				$str = preg_replace('![\s\r\n]+<li[^>]*>!i', "\n<li>$prefix", $str);
+				$prefix = in_array('li', $options['keepTags']) ? '' : $options['listItemPrefix'];
+				$str = preg_replace('![\s\r\n]+<li[^>]*>[\s\r\n]*!i', "\n<li>$prefix", $str);
+				if($prefix) $options['replacements']["\n$prefix "] = "\n$prefix"; // prevent extra space
 			}
 
 			// convert <br> tags to be just a single newline
 			if(stripos($str, '<br') !== false) {
-				$str = str_replace(array('<br>', '<br/>', '<br />'), "<br>\n", $str);
+				$str = str_replace(array('<br>', '<br/>', '<br />', '</li>'), "<br>\n", $str);
 				while(stripos($str, "\n<br>") !== false) $str = str_replace("\n<br>", "<br>", $str);
 				while(stripos($str, "<br>\n\n") !== false) $str = str_replace("<br>\n\n", "<br>\n", $str);
 			}
+
+			// make headlines more prominent with underlines or uppercase
+			if(($options['uppercaseHeadlines'] || $options['underlineHeadlines']) && stripos($str, '<h') !== false) {
+				$topHtag = '';
+				if($options['underlineHeadlines']) {
+					// determine which is the top level headline tag 
+					for($n = 1; $n <= 6; $n++) {
+						if(stripos($str, "<h$n") === false) continue;
+						$topHtag = "h$n";
+						break;
+					}
+				}
+				if(preg_match_all('!<(h[123456])[^>]*>(.+?)</\1>!is', $str, $matches)) {
+					foreach($matches[2] as $key => $headline) {
+						$fullMatch = $matches[0][$key];
+						$tagName = strtolower($matches[1][$key]);
+						$underline = '';
+						if($options['underlineHeadlines']) {
+							$char = $tagName === $topHtag ? '=' : '-';
+							$underline = "\n" . str_repeat($char, $this->strlen($headline));
+						}
+						if($options['uppercaseHeadlines']) $headline = strtoupper($headline);
+						$str = str_replace($fullMatch, "<$tagName>$headline</$tagName>$underline", $str);
+					}
+				}
+			}
+		
+			// convert "<a href='url'>text</a>" tags to "text (url)"
+			if($options['linksToUrls'] && stripos($str, '<a ') !== false) {
+				if(preg_match_all('!<a\s[^<>]*href=([^\s>]+)[^<>]*>(.+?)</a>!is', $str, $matches)) {
+					$links = array();
+					foreach($matches[0] as $key => $fullMatch) {
+						$href = trim($matches[1][$key], '"\'');
+						if(strpos($href, '#') === 0) continue; // do not convert jumplinks
+						$anchorText = $matches[2][$key];
+						$links[$fullMatch] = "$anchorText ($href)";
+					}
+					if(count($links)) {
+						$str = str_replace(array_keys($links), array_values($links), $str); 
+					}
+				}
+			}
+		
+			// indent within <pre>...</pre> sections
+			if(strlen($options['preIndent']) && strpos($str, '<pre') !== false) {
+				if(preg_match_all('!<pre(?:>|\s[^>]*>)(.+?)</pre>!is', $str, $matches)) {
+					foreach($matches[0] as $key => $fullMatch) {
+						$lines = explode("\n", $matches[1][$key]);
+						foreach($lines as $k => $line) {
+							$lines[$k] = ':preIndent:' . rtrim($line); 
+						}
+						$str = str_replace($fullMatch, implode("\n", $lines), $str); 
+						$options['finishReplacements'][':preIndent:'] = $options['preIndent'];
+					}
+				}
+			}
 		}
 		
-		// normalize newlines and whitespace around newlines
-		while(strpos($str, " \n") !== false) $str = str_replace(" \n", "\n", $str);
-		while(strpos($str, "\n ") !== false) $str = str_replace("\n ", "\n", $str);
-		while(strpos($str, "\n\n\n") !== false) $str = str_replace("\n\n\n", "\n\n", $str);
-
 		// strip tags
 		if(count($options['keepTags'])) {
 			// some tags will be allowed to remain
@@ -113,6 +200,20 @@ class WireTextTools extends Wire {
 		// convert entities to plain text equivalents
 		if($options['convertEntities'] && strpos($str, '&') !== false) {
 			$str = $this->wire('sanitizer')->unentities($str);
+		}
+	
+		// collapse any redundant/extra whitespace
+		if($options['collapseSpaces']) {
+			while(strpos($str, '  ') !== false) $str = str_replace('  ', ' ', $str);
+		}
+		
+		// normalize newlines and whitespace around newlines
+		while(strpos($str, " \n") !== false) $str = str_replace(" \n", "\n", $str);
+		while(strpos($str, "\n ") !== false) $str = str_replace("\n ", "\n", $str);
+		while(strpos($str, "\n\n\n") !== false) $str = str_replace("\n\n\n", "\n\n", $str);
+		
+		if(count($options['finishReplacements'])) {
+			$str = str_replace(array_keys($options['finishReplacements']), array_values($options['finishReplacements']), $str); 
 		}
 
 		return trim($str);
@@ -224,6 +325,7 @@ class WireTextTools extends Wire {
 	 *  - `stripTags` (bool): Strip markup tags? (default=true)
 	 *  - `keepTags` (array): Array of tag names to keep, if stripTags==true. (default=[])
 	 *  - `collapseLinesWith` (string): String to collapse newlines with. (default=' ')
+	 *  - `linksToUrls` (bool): Convert links to "(url)" rather than removing entirely? (default=false) Since 3.0.132
 	 *  - `endBlocksWith` (string): Character or string to insert to identify paragraph/header separation (default='')
 	 *  - `convertEntities` (bool): Convert entity-encoded characters to text? (default=true)
 	 * @return mixed|string
@@ -237,13 +339,17 @@ class WireTextTools extends Wire {
 			'collapseLinesWith' => ' ',
 			'endBlocksWith' => '',
 			'convertEntities' => true,
+			'linksToUrls' => false,
 		);
 
 		$options = array_merge($defaults, $options);
 
 		if($options['stripTags']) {
 			$str = $this->markupToText($str, array(
+				'underlineHeadlines' => false,
+				'uppercaseHeadlines' => false,
 				'convertEntities' => $options['convertEntities'],
+				'linksToUrls' => $options['linksToUrls'],
 				'keepTags' => $options['keepTags'],
 			));
 			if(!strlen($str)) return $str;
@@ -387,7 +493,7 @@ class WireTextTools extends Wire {
 			$maxLength = $options['maxLength'];
 		} else if(is_string($maxLength) && ctype_alpha($maxLength)) {
 			$options['type'] = $maxLength;
-			$maxLength = isset($options['maxLength']) ? $options['maxLength'] : mb_strlen($str);
+			$maxLength = isset($options['maxLength']) ? $options['maxLength'] : $this->strlen($str);
 		}
 
 		if(!$maxLength) $maxLength = 255;
@@ -398,6 +504,7 @@ class WireTextTools extends Wire {
 		$tests = array();
 		$punctuationChars = $this->getPunctuationChars();
 		$endSentenceChars = $this->getPunctuationChars(true);
+		$endSentenceChars[] = ':';
 
 		if($options['keepFormatTags']) {
 			$options['keepTags'] = array_merge($options['keepTags'], array(
@@ -406,14 +513,14 @@ class WireTextTools extends Wire {
 		}
 
 		if($type === 'block') {
-			if(mb_strpos($str, $blockEndChar) !== false) $str = str_replace($blockEndChar, ' ', $str);
+			if($this->strpos($str, $blockEndChar) !== false) $str = str_replace($blockEndChar, ' ', $str);
 			$options['endBlocksWith'] = $blockEndChar;
 		}
 
 		// collapse whitespace and strip tags
 		$str = $this->collapse($str, $options);
 		
-		if(trim($options['collapseLinesWith']) && mb_strpos($str, $options['collapseLinesWith'])) {
+		if(trim($options['collapseLinesWith']) && $this->strpos($str, $options['collapseLinesWith'])) {
 			// if lines are collapsed with something other than whitespace, avoid using that string
 			// when the line already ends with sentence punctuation
 			foreach($endSentenceChars as $c) {
@@ -422,26 +529,26 @@ class WireTextTools extends Wire {
 		}
 
 		// if anything above reduced the length of the string enough, return it now
-		if(mb_strlen($str) <= $maxLength) return $str;
+		if($this->strlen($str) <= $maxLength) return $str;
 
 		// get string at maximum possible length
 		if($options['visible']) {
 			// adjust for only visible length
 			$_str = $str;
-			$str = mb_substr($str, 0, $maxLength);
+			$str = $this->substr($str, 0, $maxLength);
 			$len = $this->getVisibleLength($str);
 			if($len < $maxLength) {
 				$maxLength += ($maxLength - $len);
-				$str = mb_substr($_str, 0, $maxLength);
+				$str = $this->substr($_str, 0, $maxLength);
 			}
 			unset($_str);
 		} else {
-			$str = mb_substr($str, 0, $maxLength);
+			$str = $this->substr($str, 0, $maxLength);
 		}
 
 		// match to closest blocks, like paragraph(s)
 		if($type === 'block') {
-			$pos = $options['maximize'] ? mb_strrpos($str, $blockEndChar) : mb_strpos($str, $blockEndChar);
+			$pos = $options['maximize'] ? $this->strrpos($str, $blockEndChar) : $this->strpos($str, $blockEndChar);
 			if($pos === false) {
 				$type = 'sentence';
 			} else {
@@ -459,7 +566,7 @@ class WireTextTools extends Wire {
 		// find punctuation closes to end of string
 		if($type === 'punctuation') {
 			foreach($punctuationChars as $find) {
-				$pos = $options['maximize'] ? mb_strrpos($str, $find) : mb_strpos($str, $find);
+				$pos = $options['maximize'] ? $this->strrpos($str, $find) : $this->strpos($str, $find);
 				if($pos) $tests[] = $pos;
 			}
 			if(!count($tests)) $type = 'word';
@@ -467,50 +574,58 @@ class WireTextTools extends Wire {
 
 		// find whitespace and last word closest to end of string
 		if($type === 'word' || !count($tests)) {
-			$pos = $options['maximize'] ? mb_strrpos($str, ' ') : mb_strpos($str, ' ');
+			$pos = $options['maximize'] ? $this->strrpos($str, ' ') : $this->strpos($str, ' ');
 			if($pos) $tests[] = $pos;
 		}
 
-		// if we didn't find any place to truncate, just return exact truncated string
-		if(!count($tests)) {
-			return trim($str, $options['trim']) . $options['more'];
-		}
-
-		// we found somewhere to truncate, so truncate at the longest one possible
-		if($options['maximize']) {
-			sort($tests);
-		} else {
-			rsort($tests);
-		}
-
-		// process our tests
-		do {
-			$pos = array_pop($tests);
-			$result = trim(mb_substr($str, 0, $pos + 1));
-			$lastChar = mb_substr($result, -1);
-			$result = rtrim($result, $options['trim']);
-
-			if($type === 'sentence' || $type === 'block') {
-				// good to go with result as is
-			} else if(in_array($lastChar, $endSentenceChars)) {
-				// good, end with sentence ending punctuation
-			} else if(in_array($lastChar, $punctuationChars)) {
-				$trims = ' ';
-				foreach($punctuationChars as $c) {
-					if(mb_strpos($options['noTrim'], $c) !== false) continue;
-					if(in_array($c, $endSentenceChars)) continue;
-					$trims .= $c;
-				}
-				$result = rtrim($result, $trims) . $options['more'];
+		if(count($tests)) {
+			// we found somewhere to truncate, so truncate at the longest one possible
+			if($options['maximize']) {
+				sort($tests);
 			} else {
-				$result .= $options['more'];
+				rsort($tests);
 			}
 
-		} while(!strlen($result) && count($tests));
+			// process our tests
+			do {
+				$pos = array_pop($tests);
+				$result = trim($this->substr($str, 0, $pos + 1));
+				$lastChar = $this->substr($result, -1);
+				$result = rtrim($result, $options['trim']);
 
-		// make sure we didn't break any HTML tags as a result of truncation
-		if(strlen($result) && count($options['keepTags']) && strpos($result, '<') !== false) {
-			$result = $this->fixUnclosedTags($result);
+				if($type === 'sentence' || $type === 'block') {
+					// good to go with result as is
+				} else if(in_array($lastChar, $endSentenceChars)) {
+					// good, end with sentence ending punctuation
+				} else if(in_array($lastChar, $punctuationChars)) {
+					$trims = ' ';
+					foreach($punctuationChars as $c) {
+						if($this->strpos($options['noTrim'], $c) !== false) continue;
+						if(in_array($c, $endSentenceChars)) continue;
+						$trims .= $c;
+					}
+					$result = rtrim($result, $trims) . $options['more'];
+				} else {
+					$result .= $options['more'];
+				}
+
+			} while(!strlen($result) && count($tests));
+
+			// make sure we didn't break any HTML tags as a result of truncation
+			if(strlen($result) && count($options['keepTags']) && strpos($result, '<') !== false) {
+				$result = $this->fixUnclosedTags($result);
+			}
+		} else {
+			// if we didn't find any place to truncate, just return exact truncated string
+			$result = trim($str, $options['trim']) . $options['more'];
+		}
+		
+		if(strlen($options['more'])) {
+			// remove any duplicated more strings
+			$more = $options['more'];
+			while(strpos($result, "$more$more") !== false) {
+				$result = str_replace("$more$more", "$more", $result); 
+			}
 		}
 		
 		return $result;
@@ -548,18 +663,18 @@ class WireTextTools extends Wire {
 			
 			foreach($chars as $find) {
 				
-				$pos = $options['maximize'] ? mb_strrpos($thisStr, "$find ") : mb_strpos($thisStr, "$find ", $offset);
+				$pos = $options['maximize'] ? $this->strrpos($thisStr, "$find ") : $this->strpos($thisStr, "$find ", $offset);
 				
 				if(!$pos) continue;
 				
 				if($find === '.') {
-					$testStr = mb_substr($thisStr, 0, $pos + 1);
+					$testStr = $this->substr($thisStr, 0, $pos + 1);
 					if(preg_match($noEndRegex, $testStr, $matches)) {
 						// ends with a disallowed word, next time try to match with a shorter string
 						if($options['maximize']) {
-							$nextStr = mb_substr($testStr, 0, mb_strlen($testStr) - mb_strlen($matches[1]) - 1);
+							$nextStr = $this->substr($testStr, 0, $this->strlen($testStr) - $this->strlen($matches[1]) - 1);
 						} else {
-							$nextOffset = mb_strlen($testStr);
+							$nextOffset = $this->strlen($testStr);
 						}
 						continue;
 					}
@@ -585,7 +700,7 @@ class WireTextTools extends Wire {
 		if(strpos($str, '&') !== false && strpos($str, ';')) {
 			$str = html_entity_decode($str, ENT_QUOTES, 'UTF-8');
 		}
-		return mb_strlen($str);
+		return $this->strlen($str);
 	}
 
 	/**
@@ -603,5 +718,682 @@ class WireTextTools extends Wire {
 		}
 		return explode(' ', $s); 
 	}
+
+	/**
+	 * Get alternate words for given word 
+	 * 
+	 * This method does not do anything unless an implementation is provided by a module (or something else)
+	 * hooking the protected `WireTextTools::wordAlternates($word, $options)` method. Implementation should 
+	 * populate $event->return with any or all of the following (as available): 
+	 * 
+	 * - Word plural(s)
+	 * - Word singular(s)
+	 * - Word Lemmas
+	 * - Word Synonyms
+	 * - Anything else applicable to current $user->language
+	 * 
+	 * See the protected WireTextTools::wordAlternates() method for hook instructions and an example. 
+	 * 
+	 * @param string $word
+	 * @param array $options
+	 *  - `operator` (string): Operator being used, if applicable (default='')
+	 *  - `minLength` (int): Minimum word length to return in alternates (default=2)
+	 *  - `lowercase` (bool): Convert words to lowercase, if not already (default=false)
+	 * @return array
+	 * @since 3.0.162
+	 * @see WireTextTools::getWordStem()
+	 * 
+	 */
+	public function getWordAlternates($word, array $options = array()) {
+		
+		if(!$this->hasHook('wordAlternates()')) return array();
+		
+		$defaults = array(
+			'operator' => '', 
+			'minLength' => 2, 
+			'lowercase' => false, 
+		);
+		
+		$options = array_merge($defaults, $options);
+		$word = $this->trim($word);
+		$words = array();
+		$wordLow = $this->strtolower($word);
+		
+		if($options['lowercase']) $word = $wordLow;
+		if(empty($word)) return array();
+		
+		$alternates = $this->wordAlternates($word, $options);
+		if(!count($alternates)) return array();
+		
+		// if original word appears in return value, remove it
+		$key = array_search($word, $alternates);
+		if($key !== false) unset($alternates[$key]);
+		
+		// populate $words, removing any invalid or duplicate values
+		foreach($alternates as $w) {
+			if(!is_string($w)) continue;
+			$w = $this->trim($w);
+			$wLow = $this->strtolower($w);
+			if($wLow === $wordLow) continue; // dup of original word
+			if($options['lowercase']) $w = $wLow; // use lowercase
+			if($this->strlen($w) < $options['minLength']) continue; // too short
+			if(isset($words[$wLow])) continue; // already have it
+			$words[$wLow] = $w;
+		}
+	
+		return array_values($words);
+	}
+	
+	/**
+	 * Hookable method to return alternate words for given word
+	 *
+	 * This hookable method is separate from the public getWordAlternates() method so that
+	 * we can provide predictable and already-populated $options to whatever is hooking this, as
+	 * as provide some additional QA with the return value from modules/hooks.
+	 *
+	 * It is fine if the return value contains duplicates, the original word, or too-short words,
+	 * as the calling getWordAlternates() takes care of those before returning words to user.
+	 * Basically, hooks can ignore the `$options` argument, unless they need to know the `operator`,
+	 * which may or may not be provided by the caller.
+	 *
+	 * In hook implementation, avoid deleting what’s already present in $event->return just in
+	 * case multiple hooks are adding words.
+	 *
+	 * ~~~~~
+	 * // Contrived example of how to implement
+	 * $wire->addHookAfter('WireTextTools::wordAlternates', function(HookEvent $event) {
+	 *   $word = $event->arguments(0); // string: word requested alternates for
+	 *   $words = $event->return; // array: existing return value
+	 *
+	 *   $cats = [ 'cat', 'cats', 'kitty', 'feline', 'felines' ];
+	 *   $dogs = [ 'dog', 'dogs', 'doggy', 'canine', 'canines' ];
+	 *
+	 *   if(in_array($word, $cats)) {
+	 *     $words = array_merge($words, $cats);
+	 *   } else if(in_array($word, $dogs)) {
+	 *     $words = array_merge($words, $dogs);
+	 *   }
+	 *
+	 *   $event->return = $words;
+	 * });
+	 *
+	 * // Test it out
+	 * $words = $sanitizer->getTextTools()->getWordAlternates('cat');
+	 * echo implode(', ', $words); // outputs: cats, kitty, kitten, feline, felines
+	 * ~~~~~
+	 *
+	 * #pw-hooker
+	 *
+	 * @param string $word
+	 * @param array $options
+	 *  - `operator` (string): Operator being used, if applicable (default='')
+	 * @return array
+	 * @since 3.0.162
+	 *
+	 */
+	protected function ___wordAlternates($word, array $options) {
+		if($word && $options) {} // ignore
+		$alternates = array();
+		return $alternates;
+	}
+
+	/**
+	 * Find and return all {placeholder} tags found in given string
+	 *
+	 * @param string $str String that might contain field {tags}
+	 * @param array $options
+	 *  - `has` (bool): Specify true to only return true or false if it has tags (default=false).
+	 * 	- `tagOpen` (string): The required opening tag character(s), default is '{'
+	 *	- `tagClose` (string): The required closing tag character(s), default is '}'
+	 * @return array|bool
+	 * @since 3.0.126
+	 *
+	 */
+	public function findPlaceholders($str, array $options = array()) {
+		
+		$defaults = array(
+			'has' => false,
+			'tagOpen' => '{',
+			'tagClose' => '}', 
+		);
+		
+		$options = array_merge($defaults, $options);
+		$tags = array();
+		$pos1 = strpos($str, $options['tagOpen']);
+		
+		if($pos1 === false) return $options['has'] ? false : $tags;
+		
+		if(strlen($options['tagClose'])) {
+			$pos2 = strpos($str, $options['tagClose']);
+			if($pos2 === false) return $options['has'] ? false : $tags;
+		}
+
+		$regex = '/' . preg_quote($options['tagOpen']) . '([-_.|a-zA-Z0-9]+)' . preg_quote($options['tagClose']) . '/';
+		if($options['has']) return (bool) preg_match($regex, $str);
+		if(!preg_match_all($regex, $str, $matches)) return $tags;
+		
+		foreach($matches[0] as $key => $tag) {
+			$name = $matches[1][$key];
+			$tags[$name] = $tag;
+		}
+			
+		return $tags;
+	}
+
+	/**
+	 * Does the string have any {placeholder} tags in it?
+	 *
+	 * @param string $str
+	 * @param array $options
+	 * 	- `tagOpen` (string): The required opening tag character(s), default is '{'
+	 *	- `tagClose` (string): The required closing tag character(s), default is '}'
+	 * @return bool
+	 * @since 3.0.126
+	 *
+	 */
+	public function hasPlaceholders($str, array $options = array()) {
+		$options['has'] = true;
+		return $this->findPlaceholders($str, $options);
+	}
+	
+	/**
+	 * Given a string ($str) and values ($vars), populate placeholder “{tags}” in the string with the values
+	 *
+	 * - The `$vars` should be an associative array of `[ 'tag' => 'value' ]`.
+	 * - The `$vars` may also be an object, in which case values will be pulled as properties of the object.
+	 *
+	 * By default, tags are specified in the format: {first_name} where first_name is the name of the
+	 * variable to pull from $vars, `{` is the opening tag character, and `}` is the closing tag char.
+	 *
+	 * The tag parser can also handle subfields and OR tags, if `$vars` is an object that supports that.
+	 * For instance `{products.title}` is a subfield, and `{first_name|title|name}` is an OR tag.
+	 *
+	 * ~~~~~
+	 * $vars = [ 'foo' => 'FOO!', 'bar' => 'BAR!' ];
+	 * $str = 'This is a test: {foo}, and this is another test: {bar}';
+	 * echo $sanitizer->getTextTools()->populatePlaceholders($str, $vars);
+	 * // outputs: This is a test: FOO!, and this is another test: BAR!
+	 * ~~~~~
+	 *
+	 * @param string $str The string to operate on (where the {tags} might be found)
+	 * @param WireData|object|array $vars Object or associative array to pull replacement values from.
+	 * @param array $options Array of optional changes to default behavior, including:
+	 * 	- `tagOpen` (string): The required opening tag character(s), default is '{'
+	 *	- `tagClose` (string): The optional closing tag character(s), default is '}'
+	 *	- `recursive` (bool): If replacement value contains tags, populate those too? (default=false)
+	 *	- `removeNullTags` (bool): If a tag resolves to a NULL, remove it? If false, tag will remain. (default=true)
+	 *	- `entityEncode` (bool): Entity encode the values pulled from $vars? (default=false)
+	 *	- `entityDecode` (bool): Entity decode the values pulled from $vars? (default=false)
+	 *  - `allowMarkup` (bool): Allow markup to appear in populated variables? (default=true)
+	 * @return string String with tags populated.
+	 * @since 3.0.126 Use wirePopulateStringTags() function for older versions
+	 *
+	 */
+	public function populatePlaceholders($str, $vars, array $options = array()) {
+		
+		$defaults = array(
+			'tagOpen' => '{', // opening tag (required)
+			'tagClose' => '}', // closing tag (optional)
+			'recursive' => false, // if replacement value contains tags, populate those too?
+			'removeNullTags' => true, // if a tag value resolves to a NULL, remove it? If false, tag will be left in tact.
+			'entityEncode' => false, // entity encode values pulled from $vars?
+			'entityDecode' => false, // entity decode values pulled from $vars?
+			'allowMarkup' => true, // allow markup to appear in populated variables?
+		);
+
+		$options = array_merge($defaults, $options);
+		$optionsNoRecursive = $options['recursive'] ? array_merge($options, array('recursive' => false)) : $options;
+		$replacements = array();
+		$tags = $this->findPlaceholders($str, $options);
+
+		// create a list of replacements by finding replacement values in $vars
+		foreach($tags as $fieldName => $tag) {
+			
+			if(isset($replacements[$tag])) continue; // if already found, do not do it again
+			$fieldValue = null;
+
+			if(is_object($vars)) {
+				if($vars instanceof Page) {
+					$fieldValue = $options['allowMarkup'] ? $vars->getMarkup($fieldName) : $vars->getText($fieldName);
+				} else if($vars instanceof WireData) {
+					$fieldValue = $vars->get($fieldName);
+				} else {
+					$fieldValue = $vars->$fieldName;
+				}
+			} else if(is_array($vars)) {
+				$fieldValue = isset($vars[$fieldName]) ? $vars[$fieldName] : null;
+			}
+			
+			// if value resolves to null and we are not removing null tags, then do not add to replacements
+			if($fieldValue === null && !$options['removeNullTags']) continue;
+			
+			$fieldValue = (string) $fieldValue;
+
+			if(!$options['allowMarkup'] && strpos($fieldValue, '<') !== false) $fieldValue = strip_tags($fieldValue);
+			if($options['entityEncode']) $fieldValue = htmlentities($fieldValue, ENT_QUOTES, 'UTF-8', false);
+			if($options['entityDecode']) $fieldValue = html_entity_decode($fieldValue, ENT_QUOTES, 'UTF-8');
+			
+			if($options['recursive'] && strpos($fieldValue, $options['tagOpen']) !== false) {
+				$fieldValue = $this->populatePlaceholders($fieldValue, $vars, $optionsNoRecursive);
+			}
+		
+			$replacements[$tag] = $fieldValue;
+		}
+
+		// replace the tags 
+		if(count($tags)) {
+			$str = str_replace(array_keys($replacements), array_values($replacements), $str);
+		}
+
+		return $str; 
+	}
+
+	/**
+	 * Given two arrays, return array of the changes with 'ins' and 'del' keys
+	 * 
+	 * Based upon Paul Butler’s Simple Diff Algorithm v0.1 © 2007 (zlib/libpng) https://paulbutler.org
+	 * 
+	 * @param array $oldArray
+	 * @param array $newArray
+	 * @return array
+	 * @since 3.0.144
+	 * 
+	 */
+	protected function diffArray(array $oldArray, array $newArray) {
+		
+		$matrix = array();
+		$maxLen = 0;
+		$oldMax = 0; 
+		$newMax = 0;
+		
+		foreach($oldArray as $oldKey => $oldValue){
+			
+			$newKeys = array_keys($newArray, $oldValue);
+			
+			foreach($newKeys as $newKey) {
+				$len = 1;
+				if(isset($matrix[$oldKey - 1][$newKey - 1])) {
+					$len = $matrix[$oldKey - 1][$newKey - 1] + 1;
+				}
+				$matrix[$oldKey][$newKey] = $len;
+
+				if($len > $maxLen) {
+					$maxLen = $len;
+					$oldMax = $oldKey + 1 - $maxLen;
+					$newMax = $newKey + 1 - $maxLen;
+				}
+			}
+		}
+		
+		if($maxLen == 0) {
+			$result = array(
+				array('del' => $oldArray, 'ins' => $newArray)
+			);
+			
+		} else {
+			$result = array_merge(
+				$this->diffArray(
+					array_slice($oldArray, 0, $oldMax), 
+					array_slice($newArray, 0, $newMax)
+				),
+				array_slice($newArray, $newMax, $maxLen),
+				$this->diffArray(
+					array_slice($oldArray, $oldMax + $maxLen), 
+					array_slice($newArray, $newMax + $maxLen)
+				)
+			);
+		}
+		
+		return $result;
+	}
+
+	/**
+	 * Given two strings ($old and $new) return a diff string in HTML markup
+	 * 
+	 * @param string $old Old string value
+	 * @param string $new New string value
+	 * @param array $options Options to modify behavior:
+	 *  - `ins` (string) Markup to use for diff insertions (default: `<ins>{out}</ins>`)
+	 *  - `del` (string) Markup to use for diff deletions (default: `<del>{out}</del>`)
+	 *  - `entityEncode` (bool): Entity encode values, other than added ins/del tags? (default=true)
+	 *  - `split` (string): Regex used to split strings for parts to diff (default=`\s+`)
+	 * @return string
+	 * @since 3.0.144
+	 * 
+	 */
+	public function diffMarkup($old, $new, array $options = array()) {
+		
+		$defaults = array(
+			'ins' => "<ins>{out}</ins>",
+			'del' => "<del>{out}</del>", 
+			'entityEncode' => true,
+			'split' => '\s+', 
+		);
+		
+		/** @var Sanitizer $sanitizer */
+		$sanitizer = $this->wire('sanitizer');
+		list($old, $new) = array("$old", "$new"); // enforce as string
+		$options = array_merge($defaults, $options);
+		$oldArray = preg_split("!($options[split])!", $old, 0, PREG_SPLIT_DELIM_CAPTURE);
+		$newArray = preg_split("!($options[split])!", $new, 0, PREG_SPLIT_DELIM_CAPTURE);
+		$diffArray = $this->diffArray($oldArray, $newArray);
+		list(,$delClose) = explode('{out}', $options['del'], 2);
+		list($insOpen,) = explode('{out}', $options['ins'], 2); 
+		$out = '';
+		
+		foreach($diffArray as $diff) {
+			if(is_array($diff)) {
+				foreach(array('del', 'ins') as $key) {
+					if(empty($diff[$key])) continue;
+					$diffStr = implode('', $diff[$key]);
+					if($options['entityEncode']) $diffStr = $sanitizer->entities1($diffStr);
+					$out .= str_replace('{out}', $diffStr, $options[$key]);
+				}
+			} else {
+				$out .= ($options['entityEncode'] ? $sanitizer->entities1($diff) : $diff);
+			}
+		}
+
+		if(strpos($out, "$delClose$insOpen")) {
+			// put a space between '</del><ins>' so that it is '</del> <ins>'
+			$out = str_replace("$delClose$insOpen", "$delClose $insOpen", $out);
+		}
+		
+		return $out;
+	}
+
+	/**
+	 * Find escaped characters in $str, replace them with a placeholder, and return the placeholders 
+	 * 
+	 * Usage
+	 * ~~~~~
+	 * // 1. Escape certain chars in a string that you want to survive some processing:
+	 * $str = 'Hello \*world\* foo \"bar\" baz'; 
+	 * 
+	 * // 2. Use this method to find escape chars and replace them temporarily:
+	 * $a = $sanitizer->getTextTools()->findReplaceEscapeChars($str, [ '*', '"' ]); 
+	 * 
+	 * // 3. Process string with anything that you want NOT to see chars that were escaped:
+	 * $str = some_function_that_processes_the_string($str);
+	 * 
+	 * // 4. Do this to restore the escaped chars (restored without backslashes by default):
+	 * $str = str_replace(array_keys($a), array_values($a), $str); 
+	 * ~~~~~
+	 * 
+	 * @param string &$str String to find escape chars in, it will be modified directly (passed by reference)
+	 * @param array $escapeChars Array of chars you want to escape i.e. [ '*', '[', ']', '(', ')', '`', '_', '\\', '"' ]
+	 * @param array $options Options to modify behavior: 
+	 *  - `escapePrefix` (string): Character used to escape another character (default is backslash).
+	 *  - `restoreEscape` (bool): Should returned array also include the escape prefix, so escapes are restored? (default=false)
+	 *  - `gluePrefix` (string): Prefix for placeholders we substitute for escaped characters (default='{ESC') 
+	 *  - `glueSuffix` (string): Suffix for placeholders we substitute for escaped characters (default='}')
+	 *  - `unescapeUnknown` (bool): If we come across escaped char not in your $escapeChars list, unescape it? (default=false)
+	 *  - `removeUnknown` (bool): If we come across escaped char not in your $escapeChars list, remove the escape and char? (default=false)
+	 * @return array Returns assoc array where keys are placeholders substituted in $str and values are escaped characters. 
+	 * @since 3.0.162
+	 * 
+	 */
+	public function findReplaceEscapeChars(&$str, array $escapeChars, array $options = array()) {
+
+		$defaults = array(
+			'escapePrefix' => '\\',
+			'restoreEscape' => false,  // when restoring, also restore escape prefix?
+			'gluePrefix' => '{ESC',
+			'glueSuffix' => '}',
+			'unescapeUnknown' => false,
+			'removeUnknown' => false,
+		);
+
+		$options = array_merge($defaults, $options);
+		$escapePrefix = $options['escapePrefix'];
+		if(strpos($str, $escapePrefix) === false) return array();
+		$escapes = array();
+		$glueSuffix = $options['glueSuffix'];
+		$parts = explode($escapePrefix, $str);
+		$n = 0;
+
+		do {
+			$gluePrefix = $options['gluePrefix'] . $n;
+		} while($this->strpos($str, $gluePrefix) !== false && ++$n);
+
+		$str = array_shift($parts);
+
+		foreach($parts as $key => $part) {
+
+			$len = $this->strlen($part);
+			$char = $len > 0 ? $this->substr($part, 0, 1) : ''; // char being escaped
+			$part = $len > 1 ? $this->substr($part, 1) : ''; // everything after it
+			$charKey = array_search($char, $escapeChars); // find placeholder (glue)
+
+			if($charKey !== false) {
+				// replace escaped char with placeholder ($glue)
+				$glue = $gluePrefix . $charKey . $glueSuffix;
+				$escapes[$glue] = $options['restoreEscape'] ? $escapePrefix . $char : $char;
+				$str .= $glue . $part;
+			} else if($options['unescapeUnknown']) {
+				// unescape unknown escape char
+				$str .= $char . $part;
+			} else if($options['removeUnknown']) {
+				// remove unknown escape char
+				$str .= $part;
+			} else {
+				// some other backslash that’s allowed, restore back as it was
+				$str .= $escapePrefix . $char . $part;
+			}
+		}
+
+		return $escapes;
+	}
+	
+	/***********************************************************************************************************
+	 * MULTIBYTE PHP STRING FUNCTIONS THAT FALLBACK WHEN MBSTRING NOT AVAILABLE
+	 * 
+	 * These duplicate the equivalent PHP string methods and use exactly the same arguments
+	 * and exhibit exactly the same behavior. The only difference is that these methods using
+	 * the multibyte string versions when they are available, and fallback to the regular PHP 
+	 * string methods when not. Use these functions only when that behavior is okay. 
+	 * 
+	 */
+
+	/**
+	 * Get part of a string
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 * 
+	 * @param string $str
+	 * @param int $start
+	 * @param int|null $length Max chars to use from str. If omitted or NULL, extract all characters to the end of the string.
+	 * @return string
+	 * @see https://www.php.net/manual/en/function.substr.php
+	 * 
+	 */
+	public function substr($str, $start, $length = null) {
+		return $this->mb ? mb_substr($str, $start, $length) : substr($str, $start, $length);
+	}
+
+	/**
+	 * Find position of first occurrence of string in a string
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 * 
+	 * @param string $haystack
+	 * @param string $needle
+	 * @param int $offset
+	 * @return bool|false|int
+	 * @see https://www.php.net/manual/en/function.strpos.php
+	 * 
+	 */
+	public function strpos($haystack, $needle, $offset = 0) {
+		return $this->mb ? mb_strpos($haystack, $needle, $offset) : strpos($haystack, $needle, $offset);
+	}
+
+	/**
+	 * Find the position of the first occurrence of a case-insensitive substring in a string
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 *
+	 * @param string $haystack
+	 * @param string $needle
+	 * @param int $offset
+	 * @return bool|false|int
+	 * @see https://www.php.net/manual/en/function.stripos.php
+	 *
+	 */
+	public function stripos($haystack, $needle, $offset = 0) {
+		return $this->mb ? mb_stripos($haystack, $needle, $offset) : stripos($haystack, $needle, $offset);
+	}
+
+	/**
+	 * Find the position of the last occurrence of a substring in a string
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 *
+	 * @param string $haystack
+	 * @param string $needle
+	 * @param int $offset
+	 * @return bool|false|int
+	 * @see https://www.php.net/manual/en/function.strrpos.php
+	 *
+	 */
+	public function strrpos($haystack, $needle, $offset = 0) {
+		return $this->mb ? mb_strrpos($haystack, $needle, $offset) : strrpos($haystack, $needle, $offset);
+	}
+
+	/**
+	 * Find the position of the last occurrence of a case-insensitive substring in a string
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 *
+	 * @param string $haystack
+	 * @param string $needle
+	 * @param int $offset
+	 * @return bool|false|int
+	 * @see https://www.php.net/manual/en/function.strripos.php
+	 *
+	 */
+	public function strripos($haystack, $needle, $offset = 0) {
+		return $this->mb ? mb_strripos($haystack, $needle, $offset) : strripos($haystack, $needle, $offset);
+	}
+
+	/**
+	 * Get string length
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 * 
+	 * @param string $str
+	 * @return int
+	 * @see https://www.php.net/manual/en/function.strlen.php
+	 * 
+	 */
+	public function strlen($str) {
+		return $this->mb ? mb_strlen($str) : strlen($str);
+	}
+
+	/**
+	 * Make a string lowercase
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 * 
+	 * @param string $str
+	 * @return string
+	 * @see https://www.php.net/manual/en/function.strtolower.php
+	 * 
+	 */
+	public function strtolower($str) {
+		return $this->mb ? mb_strtolower($str) : strtolower($str);
+	}
+
+	/**
+	 * Make a string uppercase
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 *
+	 * @param string $str
+	 * @return string
+	 * @see https://www.php.net/manual/en/function.strtoupper.php
+	 *
+	 */
+	public function strtoupper($str) {
+		return $this->mb ? mb_strtoupper($str) : strtoupper($str);
+	}
+
+	/**
+	 * Count the number of substring occurrences
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 * 
+	 * @param string $haystack
+	 * @param string $needle
+	 * @return int
+	 * @see https://www.php.net/manual/en/function.substr-count.php
+	 * 
+	 */
+	public function substrCount($haystack, $needle) {
+		return $this->mb ? mb_substr_count($haystack, $needle) : substr_count($haystack, $needle); 
+	}
+
+	/**
+	 * Find the first occurrence of a string
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 *
+	 * @param string $haystack
+	 * @param string $needle
+	 * @param bool $beforeNeedle Return part of haystack before first occurrence of the needle? (default=false)
+	 * @return false|string
+	 * @see https://www.php.net/manual/en/function.strstr.php
+	 *
+	 */
+	public function strstr($haystack, $needle, $beforeNeedle = false) {
+		return $this->mb ? mb_strstr($haystack, $needle, $beforeNeedle) : strstr($haystack, $needle, $beforeNeedle);
+	}
+
+	/**
+	 * Find the first occurrence of a string (case insensitive)
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 * 
+	 * @param string $haystack
+	 * @param string $needle
+	 * @param bool $beforeNeedle Return part of haystack before first occurrence of the needle? (default=false)
+	 * @return false|string
+	 * @see https://www.php.net/manual/en/function.stristr.php
+	 * 
+	 */
+	public function stristr($haystack, $needle, $beforeNeedle = false) {
+		return $this->mb ? mb_stristr($haystack, $needle, $beforeNeedle) : stristr($haystack, $needle, $beforeNeedle); 
+	}
+
+
+	/**
+	 * Find the last occurrence of a character in a string
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 * 
+	 * @param string $haystack
+	 * @param string $needle Only first given character used
+	 * @return false|string
+	 * @see https://www.php.net/manual/en/function.strrchr.php
+	 * 
+	 */
+	public function strrchr($haystack, $needle) {
+		return $this->mb ? mb_strrchr($haystack, $needle) : strrchr($haystack, $needle); 
+	}
+
+	/**
+	 * Strip whitespace (or other characters) from the beginning and end of a string
+	 * 
+	 * #pw-group-PHP-function-alternates
+	 * 
+	 * @param string $str
+	 * @param string $chars Omit for default
+	 * @return string
+	 * 
+	 */
+	public function trim($str, $chars = '') {
+		if(!$this->mb) return $chars === '' ? trim($str) : trim($str, $chars);
+		return $this->wire('sanitizer')->trim($str, $chars);
+	}
+	
 
 }

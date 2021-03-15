@@ -3,7 +3,7 @@
 /**
  * ImageSizer Engine Module (Abstract)
  * 
- * Copyright (C) 2016 by Horst Nogajski and Ryan Cramer
+ * Copyright (C) 2016-2019 by Horst Nogajski and Ryan Cramer
  * This file licensed under Mozilla Public License v2.0 http://mozilla.org/MPL/2.0/
  *
  * @property bool $autoRotation
@@ -18,6 +18,10 @@
  * @property string $flip
  * @property bool $useUSM
  * @property int $enginePriority Priority for use among other ImageSizerEngine modules (0=disabled, 1=first, 2=second, 3=and so on)
+ * @property bool $webpAdd
+ * @property int $webpQuality
+ * @property bool|null $webpResult
+ * @property bool|null $webpOnly
  * 
  */
 abstract class ImageSizerEngine extends WireData implements Module, ConfigurableModule {
@@ -59,6 +63,38 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 */
 	protected $quality = 90;
+
+	/**
+	 * WebP Image quality setting, 1..100
+	 *
+	 * @var int
+	 *
+	 */
+	protected $webpQuality = 90;
+
+	/**
+	 * Also create a WebP Image with this variation?
+	 *
+	 * @var bool
+	 *
+	 */
+	protected $webpAdd = false;
+
+	/**
+	 * Only create the webp file?
+	 * 
+	 * @var bool
+	 * 
+	 */
+	protected $webpOnly = false;
+
+	/**
+	 * webp result (null=not known or not applicable)
+	 * 
+	 * @var bool|null
+	 * 
+	 */
+	protected $webpResult = null;
 
 	/**
 	 * Image interlace setting, false or true
@@ -219,6 +255,8 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 		'cropping',
 		'interlace', 
 		'quality',
+		'webpQuality',
+		'webpAdd',
 		'sharpening',
 		'defaultGamma',
 		'scale',
@@ -448,6 +486,64 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 		return $this->validSourceImageFormats();
 	}
 
+	/**
+	 * Get an array of image file formats this ImageSizerModule can use as source or target
+	 * 
+	 * Unless using the $type argument, returned array contains 'source' and 'target' indexes, 
+	 * each an array of image file types/extensions in uppercase. 
+	 * 
+	 * @param string $type Specify 'source' or 'target' to get just those formats, or omit to get all.
+	 * @return array 
+	 * @since 3.0.138
+	 * 
+	 */
+	public function getSupportedFormats($type = '') {
+		$a = array(
+			'source' => $this->validSourceImageFormats(),
+			'target' => $this->validTargetImageFormats()
+		);
+		return $type && isset($a[$type]) ? $a[$type] : $a;
+	}
+
+	/**
+	 * Get array of information about this engine
+	 * 
+	 * @return array
+	 * @since 3.0.138
+	 * 
+	 */
+	public function getEngineInfo() {
+		
+		$formats = $this->getSupportedFormats();
+		$moduleName = $this->className();
+		$className = $this->className(true);
+
+		if(is_callable("$className::getModuleInfo")) {
+			$moduleInfo = $className::getModuleInfo();
+		} else {
+			$moduleInfo = $this->wire('modules')->getModuleInfoVerbose($className);
+		}
+
+		if(!is_array($moduleInfo)) $moduleInfo = array();
+
+		$info = array(
+			'name' => str_replace('ImageSizerEngine', '', $moduleName),
+			'title' => isset($moduleInfo['title']) ? $moduleInfo['title'] : '',
+			'class' => $moduleName,
+			'summary' => isset($moduleInfo['summary']) ? $moduleInfo['summary'] : '',
+			'author' => isset($moduleInfo['author']) ? $moduleInfo['author'] : '',
+			'moduleVersion' => isset($moduleInfo['version']) ? $moduleInfo['version'] : '',
+			'libraryVersion' => $this->getLibraryVersion(),
+			'priority' => $this->enginePriority,
+			'sources' => $formats['source'],
+			'targets' => $formats['target'],
+			'quality' => $this->quality,
+			'sharpening' => $this->sharpening,
+		);
+
+		return $info;
+	}
+
 	/*************************************************************************************************
 	 * COMMON IMPLEMENTATION METHODS
 	 *
@@ -552,9 +648,9 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 		$dest = preg_replace('/\.' . $extension . '$/', '_tmp.' . $extension, $filename);
 		if(strlen($content) == @file_put_contents($dest, $content, \LOCK_EX)) {
 			// on success we replace the file
-			unlink($filename);
-			rename($dest, $filename);
-			wireChmod($filename);
+			$this->wire('files')->unlink($filename);
+			$this->wire('files')->rename($dest, $filename);
+			$this->wire('files')->chmod($filename);
 			return true;
 		} else {
 			// it was created a temp diskfile but not with all data in it
@@ -669,28 +765,28 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 		if($targetWidth == $originalTargetWidth && 1 + $targetWidth == $pWidth) $pWidth = $pWidth - 1;
 		if($targetHeight == $originalTargetHeight && 1 + $targetHeight == $pHeight) $pHeight = $pHeight - 1;
 
-		if(!$this->upscaling) {
-			// we are going to shoot for something smaller than the target
-
-			while($pWidth > $img['width'] || $pHeight > $img['height']) {
-				// favor the smallest dimension
-				if($pWidth > $img['width']) {
-					$pWidth = $img['width'];
-					$pHeight = $this->getProportionalHeight($pWidth);
-				}
-
-				if($pHeight > $img['height']) {
-					$pHeight = $img['height'];
-					$pWidth = $this->getProportionalWidth($pHeight);
-				}
-
-				if($targetWidth > $pWidth) $targetWidth = $pWidth;
-				if($targetHeight > $pHeight) $targetHeight = $pHeight;
-
-				if(!$this->cropping) {
-					$targetWidth = $pWidth;
-					$targetHeight = $pHeight;
-				}
+		if(!$this->upscaling && ($img['width'] < $targetWidth || $img['height'] < $targetHeight)) {
+			// via @horst-n PR #118: 
+			// upscaling is not allowed and we have one or both dimensions to small,
+			// we scale down the target dimensions to fit within the image dimensions, 
+			// with respect to the target dimensions ratio
+			$ratioSource = $img['height'] / $img['width'];
+			$ratioTarget = !$this->cropping ? $ratioSource : $targetHeight / $targetWidth;
+			if($ratioSource >= $ratioTarget) {
+				// ratio is equal or target fits into source
+				$pWidth = $targetWidth = $img['width'];
+				$pHeight = $img['height'];
+				$targetHeight = ceil($pWidth * $ratioTarget);
+			} else {
+				// target doesn't fit into source
+				$pHeight = $targetHeight = $img['height'];
+				$pWidth = $img['width'];
+				$targetWidth = ceil($pHeight / $ratioTarget);
+			}
+			if($this->cropping) {
+				// we have to disable any sharpening method here, 
+				// as the source will not be resized, only cropped
+				$this->sharpening = 'none';
 			}
 		}
 
@@ -819,7 +915,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *     disable cropping, specify boolean false. To enable cropping with default (center), you may also specify
 	 *     boolean true.
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setCropping($cropping = true) {
@@ -834,7 +930,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param array $value containing 4 params (x y w h) indexed or associative
 	 *
-	 * @return $this
+	 * @return self
 	 * @throws WireException when given invalid value
 	 *
 	 */
@@ -878,14 +974,51 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param int $n
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setQuality($n) {
-		$n = (int) $n;
-		if($n < 1) $n = 1;
-		if($n > 100) $n = 100;
-		$this->quality = (int) $n;
+		$this->quality = $this->getIntegerValue($n, 1, 100);
+		return $this;
+	}
+
+	/**
+	 * Set the image quality 1-100 for WebP output, where 100 is highest quality
+	 *
+	 * @param int $n
+	 *
+	 * @return self
+	 *
+	 */
+	public function setWebpQuality($n) {
+		$this->webpQuality = $this->getIntegerValue($n, 1, 100);
+		return $this;
+	}
+
+	/**
+	 * Set flag to also create a webp file or not
+	 *
+	 * @param bool $webpAdd
+	 * @param bool|null $webpOnly
+	 * @return self
+	 *
+	 */
+	public function setWebpAdd($webpAdd, $webpOnly = null) {
+		$this->webpAdd = (bool) $webpAdd;
+		if(is_bool($webpOnly)) $this->webpOnly = $webpOnly;
+		return $this;
+	}
+
+	/**
+	 * Set flag to only create a webp file
+	 *
+	 * @param bool value$
+	 * @return self
+	 *
+	 */
+	public function setWebpOnly($value) {
+		$this->webpOnly = (bool) $value;
+		if($this->webpOnly) $this->webpAdd = true; // webpAdd required for webpOnly
 		return $this;
 	}
 
@@ -928,7 +1061,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param mixed $value
 	 *
-	 * @return $this
+	 * @return self
 	 * @throws WireException
 	 *
 	 */
@@ -957,7 +1090,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param bool $value Whether to auto-rotate or not (default = true)
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setAutoRotation($value = true) {
@@ -970,7 +1103,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param bool $value Whether to upscale or not (default = true)
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setUpscaling($value = true) {
@@ -983,7 +1116,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param bool $value Whether to upscale or not (default = true)
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setInterlace($value = true) {
@@ -996,7 +1129,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param float|int $value 0.5 to 4.0 or -1 to disable
 	 *
-	 * @return $this
+	 * @return self
 	 * @throws WireException when given invalid value
 	 *
 	 */
@@ -1016,7 +1149,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param int $value 10 to 60 recommended, default is 30
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setTimeLimit($value = 30) {
@@ -1042,7 +1175,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param float $scale
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setScale($scale) {
@@ -1057,7 +1190,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param bool $hidpi True or false (default=true)
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setHidpi($hidpi = true) {
@@ -1071,7 +1204,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param $degrees
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setRotate($degrees) {
@@ -1089,7 +1222,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param $flip
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setFlip($flip) {
@@ -1103,7 +1236,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param bool $value Whether to USM is used or not (default = true)
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setUseUSM($value = true) {
@@ -1116,6 +1249,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param array $options May contain the following (show with default values):
 	 *    'quality' => 90,
+	 *    'webpQuality' => 90,
 	 *    'cropping' => true,
 	 *    'upscaling' => true,
 	 *    'autoRotation' => true,
@@ -1125,7 +1259,7 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *    'rotate' => 0 (90, 180, 270 or negative versions of those)
 	 *    'flip' => '', (vertical|horizontal)
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setOptions(array $options) {
@@ -1147,6 +1281,15 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 					break;
 				case 'quality':
 					$this->setQuality($value);
+					break;
+				case 'webpQuality':
+					$this->setWebpQuality($value);
+					break;
+				case 'webpAdd':
+					$this->setWebpAdd($value);
+					break;
+				case 'webpOnly':
+					$this->setWebpOnly($value);
 					break;
 				case 'cropping':
 					$this->setCropping($value);
@@ -1196,6 +1339,25 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 		if(in_array(strtolower($value), array('0', 'off', 'false', 'no', 'n', 'none'))) return false;
 		return ((int) $value) > 0;
 	}
+	
+	/**
+	 * Get integer value within given range
+	 *
+	 * @param int $n Number to require in given range
+	 * @param int $min Minimum allowed number
+	 * @param int $max Maximum allowed number
+	 * @return int
+	 *
+	 */
+	protected function getIntegerValue($n, $min, $max) {
+		$n = (int) $n;
+		if($n < $min) {
+			$n = $min;
+		} else if($n > $max) {
+			$n = $max;
+		}
+		return $n;
+	}
 
 	/**
 	 * Return an array of the current options
@@ -1207,6 +1369,9 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 
 		$options = array(
 			'quality' => $this->quality,
+			'webpQuality' => $this->webpQuality,
+			'webpAdd' => $this->webpAdd,
+			'webpOnly' => $this->webpOnly,
 			'cropping' => $this->cropping,
 			'upscaling' => $this->upscaling,
 			'interlace' => $this->interlace, 
@@ -1247,6 +1412,8 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 			'options'
 		);
 
+		if($key === 'webpResult') return $this->webpResult;
+		if($key === 'webpOnly') return $this->webpOnly;
 		if(in_array($key, $keys)) return $this->$key;
 		if(in_array($key, $this->optionNames)) return $this->$key;
 		if(isset($this->options[$key])) return $this->options[$key];
@@ -1387,12 +1554,22 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 *
 	 * @param bool $modified
 	 *
-	 * @return $this
+	 * @return self
 	 *
 	 */
 	public function setModified($modified) {
 		$this->modified = $modified ? true : false;
 		return $this;
+	}
+
+	/**
+	 * Get whether the image was modified
+	 * 
+	 * @return bool
+	 * 
+	 */
+	public function getModified() {
+		return $this->modified;
 	}
 
 	/**
@@ -1538,13 +1715,17 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 			return false; // fallback or failed
 		}
 
-		// all went well, copy back the temp file, remove the temp file
-		if(!@copy($this->tmpFile, $this->filename)) return false; // fallback or failed 
-		wireChmod($this->filename);
-		@unlink($this->tmpFile);
-
-		// post processing: IPTC, setModified and reload ImageInfo
-		$this->writeBackIPTC($this->filename, false);
+		if($this->webpOnly) {
+			$this->wire('files')->unlink($this->tmpFile);
+		} else {
+			// all went well, copy back the temp file,
+			if(!@copy($this->tmpFile, $this->filename)) return false; // fallback or failed 
+			$this->wire('files')->chmod($this->filename);
+			// remove the temp file
+			$this->wire('files')->unlink($this->tmpFile);
+			// post processing: IPTC, setModified and reload ImageInfo
+			$this->writeBackIPTC($this->filename, false);
+		}
 		$this->setModified($this->modified);
 		$this->loadImageInfo($this->filename, true);
 
@@ -1590,13 +1771,13 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 		if($result) {
 			// success
 			if($tmpFilename != $dstFilename) {
-				if(is_file($dstFilename)) unlink($dstFilename);
-				rename($tmpFilename, $dstFilename);
+				if(is_file($dstFilename)) $this->wire('files')->unlink($dstFilename);
+				$this->wire('files')->rename($tmpFilename, $dstFilename);
 			}
-			wireChmod($dstFilename);
+			$this->wire('files')->chmod($dstFilename);
 		} else {
 			// fail
-			if(is_file($tmpFilename)) unlink($tmpFilename);	
+			if(is_file($tmpFilename)) $this->wire('files')->unlink($tmpFilename);	
 		}
 		
 		return $result;
@@ -1858,6 +2039,17 @@ abstract class ImageSizerEngine extends WireData implements Module, Configurable
 	 */
 	public function getConfigData() {
 		return $this->moduleConfigData;
+	}
+
+	/**
+	 * Get library version string
+	 * 
+	 * @return string Returns version string or blank string if not applicable/available
+	 * @since 3.0.138
+	 * 
+	 */
+	public function getLibraryVersion() {
+		return '';
 	}
 
 	/**

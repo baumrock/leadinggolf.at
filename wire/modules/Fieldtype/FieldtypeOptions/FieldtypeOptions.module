@@ -3,8 +3,10 @@
 /**
  * ProcessWire Select Options Fieldtype
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
+ * 
+ * @property SelectableOptionManager $manager
  *
  */
 
@@ -35,8 +37,12 @@ class FieldtypeOptions extends FieldtypeMulti implements Module {
 		require_once($path . 'SelectableOption.php');
 		require_once($path . 'SelectableOptionArray.php');
 		require_once($path . 'SelectableOptionManager.php');	
-		$this->manager = $this->wire(new SelectableOptionManager());
 		parent::__construct();
+	}
+	
+	public function wired() {
+		$this->manager = $this->wire(new SelectableOptionManager());
+		parent::wired();
 	}
 
 	/**
@@ -100,11 +106,11 @@ class FieldtypeOptions extends FieldtypeMulti implements Module {
 			$inputfield->addOption((int) $option->id, $option->getTitle()); 
 		}
 	
-		if($field->initValue) {
+		if($field->get('initValue')) {
 			$value = $page->getUnformatted($field->name); 
 			if($field->required && !$field->requiredIf) {
 				if(empty($value) || !wireCount($value)) {
-					$page->set($field->name, $field->initValue);
+					$page->set($field->name, $field->get('initValue'));
 				}
 			} else if($this->wire('process') != 'ProcessField' && !wireCount($value)) {
 				$this->warning(
@@ -230,10 +236,10 @@ class FieldtypeOptions extends FieldtypeMulti implements Module {
 		$sleepValue = array();
 		if(empty($value) || !count($value)) {
 			// value is empty
-			if($field->required && $field->initValue) {
+			if($field->required && $field->get('initValue')) {
 				// value is required, and an initial value is supplied
 				// so populate the initial value
-				$initValue = $field->initValue;	
+				$initValue = $field->get('initValue');	
 				if(!is_array($initValue)) $initValue = array($initValue);
 				foreach($initValue as $v) {
 					$sleepValue[] = (int) $v;
@@ -306,19 +312,34 @@ class FieldtypeOptions extends FieldtypeMulti implements Module {
 		if($subfield == 'data' && (ctype_digit("$value") || empty($value))) {
 			// this is fine (presumed to be an option_id)
 		} else {
-			// some other subfield
+			// some other subfield, which needs to be mapped to either value or title
+			$options = array();
 			
-			if(!$subfield || !SelectableOption::isProperty($subfield)) {
-				// if empty subfield or not a subfield we recognize, just assume title
-				$subfield = 'title';
+			if($subfield === 'data' && ($operator === '=' || $operator === '!=')) {
+				// subfield not specified: matching some string value, is it a value or a title? (allow for either)
+				$options = $this->manager->getOptions($query->field, array(
+					'value' => $value, 
+					'title' => $value, 
+					'or' => true
+				));
 			}
-			$options = $this->manager->findOptionsByProperty($query->field, $subfield, $operator, $value);
+		
+			if(!count($options)) {
+				if(!$subfield || !SelectableOption::isProperty($subfield)) {
+					// if empty subfield or not a subfield we recognize, just assume title
+					$subfield = 'title';
+				}
+				$options = $this->manager->findOptionsByProperty($query->field, $subfield, $operator, $value);
+			}
+			
 			$option = $options->first();
+			
 			if($operator != '=' && $operator != '!=') {
 				// for fulltext operations...
 				// since we are now just matching IDs of already found options
 				$operator = '='; 
 			}
+			
 			$subfield = 'data';
 			$value = $option ? $option->id : null;
 		}
@@ -328,9 +349,13 @@ class FieldtypeOptions extends FieldtypeMulti implements Module {
 			$database = $this->wire('database'); 
 			$t = $database->escapeTable($query->field->getTable());
 			$s = $database->escapeCol($subfield); 
-			$v = $database->escapeStr($value); 
-			$query->where("(SELECT COUNT(*) FROM $t WHERE $t.pages_id=pages.id AND $t.$s='$v')=0");
-			$query->parentQuery->where("($table.data IS NULL OR $table.$s!='$v')");
+			
+			$bindKey = $query->bindValueGetKey($value);
+			$query->where("(SELECT COUNT(*) FROM $t WHERE $t.pages_id=pages.id AND $t.$s=$bindKey)=0");
+			
+			$bindKey = $query->parentQuery->bindValueGetKey($value);
+			$query->parentQuery->where("($table.data IS NULL OR $table.$s!=$bindKey)");
+			
 			return $query;
 		}
 		
@@ -418,6 +443,40 @@ class FieldtypeOptions extends FieldtypeMulti implements Module {
 		$data = parent::___importConfigData($field, $data); 
 		$data['errors']['export_options'] = $this->_('Import of options is not yet implemented. Though they can easily be imported from one site to another by copy/paste directly from the field edit screen.'); 
 		return $data;
+	}
+
+	/**
+	 * Return a cloned copy of $field
+	 *
+	 * @param Field $field
+	 * @return Field cloned copy
+	 *
+	 */
+	public function ___cloneField(Field $field) {
+		$this->wire('fields')->addHookAfter('cloned', $this, 'hookCloned');
+		return parent::___cloneField($field);
+	}
+
+	/**
+	 * Hook called when field is cloned, to clone the selectable options from old field to new field
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param HookEvent $event
+	 * 
+	 */
+	public function hookCloned(HookEvent $event) {
+		/** @var Field $oldField */
+		$oldField = $event->arguments(0);
+		/** @var Field $newField */
+		$newField = $event->arguments(1);
+		/** @var FieldtypeOptions $fieldtype */
+		$fieldtype = $oldField->type; 
+		if(!$fieldtype instanceof FieldtypeOptions) return;
+		$options = $fieldtype->getOptions($oldField);
+		$options->setField($newField);
+		$fieldtype->addOptions($newField, $options);
+		$event->removeHook(null);
 	}
 	
 	/**

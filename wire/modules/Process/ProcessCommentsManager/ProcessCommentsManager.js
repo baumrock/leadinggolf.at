@@ -15,6 +15,7 @@ $(document).ready(function() {
 		var $parent = $(this).closest('.CommentTextEditable');
 		$parent.parent('.CommentText').removeClass('CommentTextOverflow');
 		$textarea.attr('name', $parent.attr('id')); 
+		$textarea.addClass($parent.attr('data-textarea-class'));
 		//$textarea.height($parent.height()); 
 		$(this).remove(); // remove edit link
 		$textarea.val($parent.text()); 
@@ -37,6 +38,20 @@ $(document).ready(function() {
 			$text.addClass('CommentTextOverflow'); 
 		}
 	});
+
+	/*
+	// for cite, email and website editor inputs (@todo)
+	$("a.CommentToggleSiblings").click(function() {
+		$(this).siblings().each(function() {
+			var $item = $(this);
+			if($item.attr('hidden')) {
+				$item.attr('hidden', false);
+			} else {
+				$item.attr('hidden', true);
+			}
+		});
+	}); 
+	*/
 	
 	$("#CommentLimitSelect").change(function() {
 		window.location = './?limit=' + parseInt($(this).val());
@@ -61,9 +76,11 @@ $(document).ready(function() {
 	$("#CommentCheckAll").click(function() {
 		var $items = $(".CommentCheckbox");
 		if($(this).is(":checked")) {
-			$items.attr('checked', 'checked');
+			// $items.attr('checked', 'checked'); // JQM
+			$items.prop('checked', true);
 		} else {
-			$items.removeAttr('checked');
+			// $items.removeAttr('checked'); // JQM
+			$items.prop('checked', false);
 		}
 		$items.each(function() {
 			commentCheckboxClicked($(this));

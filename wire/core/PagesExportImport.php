@@ -96,7 +96,7 @@ class PagesExportImport extends Wire {
 					$qty++;
 				}
 			} else {
-				if(unlink($pathname)) {
+				if($files->unlink($pathname, true)) {
 					$this->message($this->_('Removed old file') . " - $pathname", Notice::debug); 
 					$qty++;
 				}
@@ -151,8 +151,9 @@ class PagesExportImport extends Wire {
 			'allowHidden' => false, 
 			'allowEmptyDirs' => false
 		)); 
+		if($zipInfo) {} // ignore
 		
-		unlink($jsonFile); 
+		$files->unlink($jsonFile, true); 
 		
 		return $zipName;
 	}
@@ -230,6 +231,9 @@ class PagesExportImport extends Wire {
 	 *
 	 */
 	public function pagesToArray(PageArray $items, array $options = array()) {
+	
+		/** @var Config $config */
+		$config = $this->wire('config');
 
 		$defaults = array(
 			'verbose' => false,
@@ -242,11 +246,15 @@ class PagesExportImport extends Wire {
 		$a = array(
 			'type' => 'ProcessWire:PageArray',
 			'created' => date('Y-m-d H:i:s'), 
-			'version' => $this->wire('config')->version,
+			'version' => $config->version,
 			'user' => $this->wire('user')->name,
-			'host' => $this->wire('config')->httpHost,
+			'host' => $config->httpHost,
 			'pages' => array(),
 			'fields' => array(),
+			'urls' => array(
+				'root' => $config->urls->root,
+				'assets' => $config->urls->assets
+			),
 			'timer' => Debug::timer(), 
 			// 'pagination' => array(),
 		);
@@ -367,6 +375,8 @@ class PagesExportImport extends Wire {
 			'status' => $page->status,
 			'sort' => $page->sort,
 			'sortfield' => $page->sortfield,
+			'created' => $page->createdStr,
+			'modified' => $page->modifiedStr,
 		);
 
 		// verbose page settings
@@ -374,11 +384,9 @@ class PagesExportImport extends Wire {
 			$settings = array_merge($settings, array(
 				'parent_id' => $page->parent_id,
 				'templates_id' => $page->templates_id,
-				'created' => $page->createdStr,
-				'modified' => $page->modifiedStr,
-				'published' => $page->publishedStr,
 				'created_user' => $page->createdUser->name,
 				'modified_user' => $page->modifiedUser->name,
+				'published' => $page->publishedStr,
 			));
 		}
 		
@@ -480,6 +488,9 @@ class PagesExportImport extends Wire {
 		$info = $this->getImportInfo($a); 
 		if($info) {}
 		
+		if(isset($a['url'])) $options['originalRootUrl'] = $a['url'];
+		if(isset($a['host'])) $options['originalHost'] = $a['host'];
+		
 		foreach($a['pages'] as $item) {
 			$page = $this->arrayToPage($item, $options);
 			$id = $item['settings']['id'];
@@ -510,6 +521,8 @@ class PagesExportImport extends Wire {
 	 *  - `changeSort` (bool): Allow sort and sortfield to be changed on existing pages? (default=true)
 	 *  - `replaceTemplates` (array): Array of import-data template name to replacement template name (default=[])
 	 *  - `replaceFields` (array): Array of import-data field name to replacement field name (default=[]) 
+	 *  - `originalRootUrl` (string): Original root URL (not including hostname)
+	 *  - `originalHost` (string): Original hostname 
 	 * 
 	 * The following options are for future use and not currently applicable:
 	 *  - `changeTemplate` (bool): Allow template to be changed on existing pages? (default=false)
@@ -528,6 +541,9 @@ class PagesExportImport extends Wire {
 		if(empty($a['type']) || $a['type'] != 'ProcessWire:Page') {
 			throw new WireException('Invalid array provided to arrayToPage() method');
 		}
+	
+		/** @var Config $config */
+		$config = $this->wire('config');
 
 		$defaults = array(
 			'id' => 0, // ID that new Page should use, or update, if it already exists. (0=create new). Sets update=true.
@@ -541,12 +557,14 @@ class PagesExportImport extends Wire {
 			'changeName' => true, 
 			'changeStatus' => true, 
 			'changeSort' => true, 
-			'saveOptions' => array('adjustName' => true), // options passed to Pages::save
+			'saveOptions' => array('adjustName' => true, 'quiet' => true), // options passed to Pages::save
 			'fieldNames' => array(),  // import only these field names, when specified
 			'replaceFields' => array(), // array of import-data field name to replacement page field name
 			'replaceTemplates' => array(), // array of import-data template name to replacement page template name
 			'replaceParents' => array(), // array of import-data parent path to replacement parent path
 			'filesPath' => '', // path where file field directories are located when importing from zip (internal use)
+			'originalHost' => $config->httpHost, 
+			'originalRootUrl' => $config->urls->root,
 			'commit' => true, // commit the import? If false, changes aren't saved (dry run). 
 			'debug' => false, 
 		);
@@ -845,6 +863,12 @@ class PagesExportImport extends Wire {
 			if($page->sort != $settings['sort']) $page->sort = $settings['sort'];
 			if($page->sortfield != $settings['sortfield']) $page->sortfield = $settings['sortfield'];
 		}
+		
+		foreach(array('created', 'modified', 'published') as $dateType) {
+			if(isset($settings[$dateType])) {
+				$page->set($dateType, strtotime($settings[$dateType]));
+			}
+		}
 
 		if($languages && count($langProperties)) {
 			foreach($langProperties as $property) {
@@ -899,7 +923,9 @@ class PagesExportImport extends Wire {
 			'system' => true,
 			'caller' => $this, 
 			'commit' => $options['commit'], 
-			'test' => !$options['commit']
+			'test' => !$options['commit'],
+			'originalHost' => $options['originalHost'],
+			'originalRootUrl' => $options['originalRootUrl'],
 		);
 		
 		// fake-commit for more verbose testing of certain fieldtypes
@@ -1366,9 +1392,10 @@ class PagesExportImport extends Wire {
 			} catch(\Exception $e) {
 				$exportable = false;
 				$reason = $e->getMessage();
+				$importInfo = false;
 			}
 
-			if($exportable && !$importInfo['importable']) {
+			if($exportable && $importInfo && !$importInfo['importable']) {
 				// this fieldtype is storing data outside of the DB or in other unknown tables
 				// there's a good chance we won't be able to export/import this into an array
 				// @todo check if fieldtype implements its own exportValue/importValue, and if

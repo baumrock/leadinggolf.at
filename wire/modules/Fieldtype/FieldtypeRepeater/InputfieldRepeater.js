@@ -81,18 +81,21 @@ function InputfieldRepeater($) {
 			var $checkbox = $item.find('#delete_repeater' + pageID);
 
 			if($checkbox.is(":checked")) {
-				$checkbox.removeAttr('checked');
+				// $checkbox.removeAttr('checked'); // JQM
+				$checkbox.prop('checked', false);
 				$header.removeClass('ui-state-error').addClass('ui-state-default');
 				//if($parent.is('.InputfieldStateCollapsed')) $parent.toggleClass('InputfieldStateCollapsed', 100);
 				$item.removeClass('InputfieldRepeaterDeletePending');
 			} else {
-				$checkbox.attr('checked', 'checked');
+				// $checkbox.attr('checked', 'checked'); // JQM
+				$checkbox.prop('checked', true);
 				$header.removeClass('ui-state-default').addClass('ui-state-error');
 				if(!$item.hasClass('InputfieldStateCollapsed')) {
 					$header.find('.toggle-icon').click();
 					//$item.toggleClass('InputfieldStateCollapsed', 100);
 				}
 				$item.addClass('InputfieldRepeaterDeletePending');
+				$item.closest('.Inputfield').addClass('InputfieldStateChanged');
 			}
 			$header.find('.InputfieldRepeaterItemControls').css('background-color', $header.css('background-color'));
 		}
@@ -151,7 +154,37 @@ function InputfieldRepeater($) {
 		});
 		return false;
 	};
-
+	
+	var eventSettingsClick = function(e) {
+		var $this = $(this);
+		var $item = $this.closest('.InputfieldRepeaterItem');
+	
+		// find .InputfieldRepeaterSettings, if applicable (like with RM)
+		// .InputfieldRepeaterItem > .InputfieldContent > .Inputfields > .InputfieldRepeaterSettings
+		var $settingsParent = $item.children('.InputfieldContent').children('.Inputfields');
+		var $settings = $settingsParent.children('.InputfieldRepeaterSettings'); // ajax loaded item
+		
+		if(!$settings.length) {
+			// already open item has more layers
+			// .InputfieldRepeaterItem > .InputfieldContent > .Inputfields > .InputfieldWrapper > .Inputfields > .InputfieldRepeaterSettings
+			$settingsParent = $settingsParent.children('.InputfieldWrapper').children('.Inputfields');
+			$settings = $settingsParent.children('.InputfieldRepeaterSettings');
+		}
+		
+		if($item.hasClass('InputfieldStateCollapsed')) {
+			$this.closest('.InputfieldHeader').click(); //find('.InputfieldRepeaterToggle').click();	
+		}
+		
+		if($settings.is(':visible')) {
+			$settings.slideUp('fast');
+			$this.addClass('ui-priority-secondary');
+		} else {
+			$settings.slideDown('fast');
+			$this.removeClass('ui-priority-secondary');
+		}
+		return false
+	}
+	
 	/**
 	 * Event handler for when the repeater item "on/off" toggle is clicked
 	 * 
@@ -218,7 +251,7 @@ function InputfieldRepeater($) {
 		var pageID = $repeater.attr('data-page'); // $("#Inputfield_id").val();
 		var itemID = parseInt($item.attr('data-page'));
 		var repeaterID = $repeater.attr('id');
-		var fieldName = repeaterID.replace('wrap_Inputfield_', '');
+		var fieldName = repeaterID.replace('wrap_Inputfield_', '').replace('_LPID' + pageID, '');
 		var ajaxURL = ProcessWire.config.InputfieldRepeater.editorUrl + '?id=' + pageID + '&field=' + fieldName + '&repeater_edit=' + itemID;
 		var $spinner = $item.find('.InputfieldRepeaterDrag');
 		var $inputfields = $loaded.closest('.Inputfields');
@@ -227,7 +260,7 @@ function InputfieldRepeater($) {
 		if($repeater.hasClass('InputfieldNoDraft')) ajaxURL += '&nodraft=1';	
 
 		$spinner.removeClass('fa-arrows').addClass('fa-spin fa-spinner');
-		repeaterID = repeaterID.replace(/_repeater\d+$/, '');
+		repeaterID = repeaterID.replace(/_repeater\d+$/, '').replace('_LPID' + pageID, '');
 
 		$.get(ajaxURL, function(data) {
 			var $inputs = $(data).find('#' + repeaterID + ' > ' +
@@ -240,9 +273,14 @@ function InputfieldRepeater($) {
 			InputfieldsInit($inputfields);
 
 			var $repeaters = $inputs.find('.InputfieldRepeater');
-			if($repeaters.length) $repeaters.each(function() {
-				initRepeater($(this));
-			});
+			if($repeaters.length) {
+				// nested
+				$repeaters.each(function() {
+					initRepeater($(this));
+				});
+			} else {
+				$item.find('.InputfieldRepeaterSettings').hide();
+			}
 
 			$content.slideDown('fast', function() {
 				$spinner.removeClass('fa-spin fa-spinner').addClass('fa-arrows');
@@ -325,10 +363,11 @@ function InputfieldRepeater($) {
 		}
 
 		// determine which page IDs we don't accept for new items (because we already have them rendered)
-		var $unpublishedItems = $inputfields.find('.InputfieldRepeaterUnpublished, .InputfieldRepeaterWasUnpublished'); // :not(.InputfieldRepeaterMinItem)');
-		if($unpublishedItems.length) {
+		// var $unpublishedItems = $inputfields.find('.InputfieldRepeaterUnpublished, .InputfieldRepeaterWasUnpublished'); // :not(.InputfieldRepeaterMinItem)');
+		var $existingItems = $inputfields.find('.InputfieldRepeaterItem:not(.InputfieldRepeaterNewItem)'); 
+		if($existingItems.length) {
 			ajaxURL += '&repeater_not=';
-			$unpublishedItems.each(function() {
+			$existingItems.each(function() {
 				ajaxURL += $(this).attr('data-page') + ',';
 			});
 		}
@@ -346,6 +385,11 @@ function InputfieldRepeater($) {
 			initRepeater($addItem);
 			$addItem.unwrap(); // unwrap div once item initialized
 			$addItem.find('.Inputfield').trigger('reloaded', [ 'InputfieldRepeaterItemAdd' ]);
+			if(cloneID) {
+				$addItem.find('.Inputfield').trigger('cloned', [ 'InputfieldRepeaterItemAdd' ]);
+				// next line can remove 9/2019, as 'cloned' support will have been in InputfieldTable for awhile
+				$addItem.find('.InputfieldTableRowID').val(0); 
+			}
 			$addItem.find('.InputfieldRepeaterSort').val($inputfields.children().length);
 			$('html, body').animate({
 				scrollTop: $addItem.offset().top
@@ -385,13 +429,14 @@ function InputfieldRepeater($) {
 		var $items = $repeater.children('.InputfieldContent').children('.Inputfields').children('.InputfieldRepeaterItem');
 		if(!$items.length) return false;
 		var $item = $items.eq(0);
+		var label, selector;
 		
 		if($item.hasClass('InputfieldStateCollapsed')) {
-			var label = ProcessWire.config.InputfieldRepeater.labels.openAll;
-			var selector = '.InputfieldStateCollapsed';
+			label = ProcessWire.config.InputfieldRepeater.labels.openAll;
+			selector = '.InputfieldStateCollapsed';
 		} else {
-			var label = ProcessWire.config.InputfieldRepeater.labels.collapseAll;
-			var selector = '.InputfieldRepeaterItem:not(.InputfieldStateCollapsed)';
+			label = ProcessWire.config.InputfieldRepeater.labels.collapseAll;
+			selector = '.InputfieldRepeaterItem:not(.InputfieldStateCollapsed)';
 		}
 		ProcessWire.confirm(label, function() {
 			$items.filter(selector).each(function() {
@@ -649,11 +694,16 @@ function InputfieldRepeater($) {
 		var $toggle = $("<i class='fa InputfieldRepeaterToggle' data-on='fa-toggle-on' data-off='fa-toggle-off'></i>");
 		var cfg = ProcessWire.config.InputfieldRepeater;
 		var allowClone = !$inputfieldRepeater.hasClass('InputfieldRepeaterNoAjaxAdd');
+		var allowSettings = $inputfieldRepeater.hasClass('InputfieldRepeaterHasSettings');
 
 		if(cfg) {
 			$toggle.attr('title', cfg.labels.toggle);
 			$delete.attr('title', cfg.labels.remove);
 			$clone.attr('title', cfg.labels.clone);
+		}
+		
+		if(allowSettings) {
+			$inputfieldRepeater.find('.InputfieldRepeaterSettings').hide();
 		}
 
 		$headers.each(function() {
@@ -675,10 +725,17 @@ function InputfieldRepeater($) {
 				var $deleteControl = $delete.clone(true);
 				var $collapseControl = $t.find('.toggle-icon');
 				$controls.prepend($collapseControl);
+				if($t.closest('.InputfieldRepeater').hasClass('InputfieldRepeaterHasSettings')) { // intentionally not using allowSettings var
+					var $settingsToggle = $("<i class='fa fa-gear InputfieldRepeaterSettingsToggle ui-priority-secondary'></i>")
+						.attr('title', cfg.labels.settings); 
+					$controls.prepend($settingsToggle);
+				}
 				if(allowClone) $controls.prepend($clone.clone(true));
-				$controls.prepend($toggleControl).prepend($deleteControl);
+				$controls.prepend($toggleControl);
+				$controls.prepend($deleteControl);
 				$t.prepend($controls);
 				$controls.css('background-color', $t.css('background-color'));
+				
 			}
 			adjustItemLabel($item, false);
 		});
@@ -691,17 +748,18 @@ function InputfieldRepeater($) {
 	 * 
 	 */
 	function initRepeater($this) {
+		var $inputfields, $inputfieldRepeater, isItem;
 
 		if($this.hasClass('InputfieldRepeaterItem')) {
 			// single repeater item
-			var $inputfields = $this;
-			var $inputfieldRepeater = $this.closest('.InputfieldRepeater');
-			var isItem = true;
+			$inputfields = $this;
+			$inputfieldRepeater = $this.closest('.InputfieldRepeater');
+			isItem = true;
 		} else {
 			// enter repeater
-			var $inputfields = $this.find('.Inputfields:eq(0)');
-			var $inputfieldRepeater = $this;
-			var isItem = false;
+			$inputfields = $this.find('.Inputfields:eq(0)');
+			$inputfieldRepeater = $this;
+			isItem = false;
 		}
 
 		if($inputfields.hasClass('InputfieldRepeaterInit')) return;
@@ -885,6 +943,7 @@ function InputfieldRepeater($) {
 			.on('click', '.InputfieldRepeaterTrash', eventDeleteClick)
 			.on('dblclick', '.InputfieldRepeaterTrash', eventDeleteDblClick)
 			.on('click', '.InputfieldRepeaterClone', eventCloneClick)
+			.on('click', '.InputfieldRepeaterSettingsToggle', eventSettingsClick)
 			.on('dblclick', '.InputfieldRepeaterToggle', eventOpenAllClick)
 			.on('click', '.InputfieldRepeaterToggle', eventToggleClick)
 			.on('opened', '.InputfieldRepeaterItem', eventItemOpened)

@@ -5,7 +5,7 @@
  *
  * Manages and provides access to all the Template instances
  * 
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2019 by Ryan Cramer
  * https://processwire.com
  * 
  * #pw-summary Manages and provides access to all the Templates.
@@ -16,40 +16,53 @@
  * @method bool|Saveable|Template clone(Saveable $item, $name = '') #pw-internal
  * @method array getExportData(Template $template) Export Template data for external use. #pw-advanced
  * @method array setImportData(Template $template, array $data) Given an array of Template export data, import it to the given Template. #pw-advanced
+ * @method void fileModified(Template $template) Hook called when a template detects that its file has been modified. #pw-hooker
  *
  */
 class Templates extends WireSaveableItems {
 
 	/**
 	 * Reference to all the Fieldgroups
+	 * 
+	 * @var Fieldgroups
 	 *
 	 */
 	protected $fieldgroups = null; 
 
 	/**
 	 * WireArray of all Template instances
+	 * 
+	 * @var TemplatesArray
 	 *
 	 */
-	protected $templatesArray; 
+	protected $templatesArray;
+	
+	/**
+	 * Templates that had changed files during this request
+	 *
+	 * @var array Array of Template objects indexed by id
+	 *
+	 */
+	protected $fileModTemplates = array();
 
 	/**
-	 * Path where Template files are stored
-	 *
+	 * Cached template ID to page class names (for getPageClass method)
+	 * 
+	 * @var array
+	 * 
 	 */
-	protected $path; 
+	protected $pageClassNames = array();
 
 	/**
 	 * Construct the Templates
 	 *
 	 * @param Fieldgroups $fieldgroups Reference to the Fieldgroups
-	 * @param string $path Path to where template files are stored
 	 *
 	 */
-	public function __construct(Fieldgroups $fieldgroups, $path) {
+	public function __construct(Fieldgroups $fieldgroups) {
 		$fieldgroups->wire($this);
 		$this->fieldgroups = $fieldgroups; 
 		$this->templatesArray = $this->wire(new TemplatesArray());
-		$this->path = $path;
 	}
 
 	/**
@@ -71,6 +84,30 @@ class Templates extends WireSaveableItems {
 	 */
 	public function getAll() {
 		return $this->templatesArray;
+	}
+
+	/**
+	 * Make an item and populate with given data
+	 * 
+	 * #pw-internal
+	 *
+	 * @param array $a Associative array of data to populate
+	 * @return Saveable|Wire
+	 * @since 3.0.146
+	 *
+	 */
+	public function makeItem(array $a = array()) {
+
+		/** @var Template $item */
+		$template = $this->wire(new Template());
+		$template->loaded(false);
+		foreach($a as $key => $value) {
+			$template->set($key, $value);
+		}
+		$template->loaded(true);
+		$template->resetTrackChanges(true);
+		
+		return $template;
 	}
 
 	/**
@@ -113,7 +150,7 @@ class Templates extends WireSaveableItems {
 	 *
 	 */
 	public function get($key) {
-		if($key == 'path') return $this->path;
+		if($key == 'path') return $this->wire('config')->paths->templates;
 		$value = $this->templatesArray->get($key); 
 		if(is_null($value)) $value = parent::get($key);
 		return $value; 
@@ -223,6 +260,7 @@ class Templates extends WireSaveableItems {
 	public function ___clone(Saveable $item, $name = '') {
 
 		$original = $item;
+		/** @var Template $item */
 		$item = clone $item; 
 
 		if($item->flags & Template::flagSystem) {
@@ -471,7 +509,8 @@ class Templates extends WireSaveableItems {
 	 * 
 	 * @param Template $template
 	 * @param bool $checkAccess Whether or not to check for user access to do this (default=false).
-	 * @param bool $getAll Specify true to return all possible parents (makes method always return a PageArray)
+	 * @param bool|int $getAll Specify true to return all possible parents (makes method always return a PageArray)
+	 *   Or specify int of maximum allowed `Page::status*` constant for items in returned PageArray (since 3.0.138). 
 	 * @return Page|NullPage|null|PageArray
 	 *
 	 */
@@ -479,6 +518,8 @@ class Templates extends WireSaveableItems {
 		
 		$foundParent = null;
 		$foundParents = $getAll ? $this->wire('pages')->newPageArray() : null;
+		$foundParentQty = 0;
+		$maxStatus = is_int($getAll) && $getAll ? ($getAll * 2) : 0;
 
 		if($template->noShortcut || !count($template->parentTemplates)) return $foundParents;
 		if($template->noParents == -1) {
@@ -500,7 +541,11 @@ class Templates extends WireSaveableItems {
 			// sort=status ensures that a non-hidden page is given preference to a hidden page
 			$include = $checkAccess ? "unpublished" : "all";
 			$selector = "templates_id=$parentTemplate->id, include=$include, sort=status";
-			if(!$getAll) $selector .= ", limit=2";
+			if($maxStatus) {
+				$selector .= ", status<$maxStatus";
+			} else if(!$getAll) {
+				$selector .= ", limit=2";
+			}
 			$parentPages = $this->wire('pages')->find($selector);
 			$numParentPages = count($parentPages);
 
@@ -508,11 +553,13 @@ class Templates extends WireSaveableItems {
 			if(!$numParentPages) continue;
 
 			if($getAll) {
+				// build list of all parents (will check access outside loop)
 				if($numParentPages) $foundParents->add($parentPages);
 				continue;
 			} else if($numParentPages > 1) {
-				// multiple possible parents
-				$parentPage = $this->wire('pages')->newNullPage();
+				// multiple possible parents, we can early-exit
+				$foundParentQty += $numParentPages;
+				break;
 			} else {
 				// one possible parent
 				$parentPage = $parentPages->first();
@@ -521,7 +568,7 @@ class Templates extends WireSaveableItems {
 			if($checkAccess) {
 				if($parentPage->id) {
 					// single defined parent
-					$p = $this->wire('pages')->newPage(array('template' => $template));
+					$p = $this->wire('pages')->newPage($template);
 					if(!$parentPage->addable($p)) continue;
 				} else {
 					// multiple possible parents
@@ -529,18 +576,21 @@ class Templates extends WireSaveableItems {
 				}
 			}
 
+			if($parentPage && $parentPage->id) $foundParentQty++;
 			$foundParent = $parentPage;
-			break;
+			if($foundParentQty > 1) break;
 		}
 		
-		if($checkAccess && $foundParents && $foundParents->count()) {
-			$p = $this->wire('pages')->newPage(array('template' => $template));
+		if($checkAccess && $getAll && $foundParents && $foundParents->count()) {
+			$p = $this->wire('pages')->newPage($template);
 			foreach($foundParents as $parentPage) {
 				if(!$parentPage->addable($p)) $foundParents->remove($parentPage);
 			}
 		}
 		
 		if($getAll) return $foundParents;
+		if($foundParentQty > 1) return $this->wire('pages')->newNullPage();
+		
 		return $foundParent;
 	}
 
@@ -549,13 +599,96 @@ class Templates extends WireSaveableItems {
 	 * 
 	 * @param Template $template
 	 * @param bool $checkAccess Specify true to exclude parent pages that user doesn't have access to add pages to (default=false)
+	 * @param int $maxStatus Max allowed `Page::status*` constant (default=0 which means not applicable). Since 3.0.138
 	 * @return PageArray
 	 * 
 	 */
-	public function getParentPages(Template $template, $checkAccess = false) {
-		return $this->getParentPage($template, $checkAccess, true);
+	public function getParentPages(Template $template, $checkAccess = false, $maxStatus = 0) {
+		$getAll = $maxStatus ? $maxStatus : true;
+		return $this->getParentPage($template, $checkAccess, $getAll);
 	}
 	
+	/**
+	 * Get class name to use for pages using given Template
+	 * 
+	 * Note that value can be different from the `$template->pageClass` property, since it is determined at runtime.
+	 * If it is different, then it is at least a class that extends the one defined by pageClass. 
+	 *
+	 * @param Template $template
+	 * @param bool $withNamespace Include namespace? (default=true)
+	 * @return string Returned class name includes namespace
+	 * @since 3.0.152
+	 *
+	 */
+	public function getPageClass(Template $template, $withNamespace = true) {
+
+		if(isset($this->pageClassNames[$template->id])) {
+			// use cached value when present
+			$pageClass = $this->pageClassNames[$template->id];
+			if(!$withNamespace) $pageClass = wireClassName($pageClass, false);
+			return $pageClass;
+		}
+
+		$corePageClass = __NAMESPACE__ . "\\Page";
+		
+		// first check for class defined with Template 'pageClass' setting
+		$pageClass = $template->pageClass;
+
+		if($pageClass && $pageClass !== 'Page') {
+			// page has custom class assignment in its template
+			$nsPageClass = wireClassName($pageClass, true);
+			// is this custom class available for instantiation?
+			if(class_exists($nsPageClass)) {
+				// class is available for use and has a namespace
+				$pageClass = $nsPageClass;
+			} else if(class_exists("\\$pageClass") && wireInstanceOf("\\$pageClass", $corePageClass)) {
+				// class appears to be available in root namespace and it extends PW’s Page class (legacy)
+				$pageClass = "\\$pageClass";
+			} else {
+				// class is not available for instantiation
+				$pageClass = '';
+			}
+		}
+	
+		$config = $this->wire('config');
+		$usePageClasses = $config->usePageClasses;
+
+		if(empty($pageClass) || $pageClass === 'Page') {
+			// if no custom Page class available, use default Page class with namespace
+			if($usePageClasses) {
+				// custom classes enabled
+				if(!isset($this->pageClassNames[0])) {
+					// index 0 holds cached default page class
+					$defaultPageClass = __NAMESPACE__ . "\\DefaultPage";
+					if(!class_exists($defaultPageClass) || !wireInstanceOf($defaultPageClass, $corePageClass)) {
+						$defaultPageClass = $corePageClass;
+					}
+					$this->pageClassNames[0] = $defaultPageClass;
+				}
+				$pageClass = $this->pageClassNames[0];
+			} else {
+				$pageClass = $corePageClass;
+			}
+		}
+
+		// determine if custom class available (3.0.152+)
+		if($usePageClasses) {
+			// generate a CamelCase name + 'Page' from template name, i.e. 'blog-post' => 'BlogPostPage'
+			$className = ucwords(str_replace(array('-', '_', '.'), ' ', $template->name));
+			$className = __NAMESPACE__ . "\\" . str_replace(' ', '', $className) . 'Page';
+			if(class_exists($className) && wireInstanceOf($className, $corePageClass)) {
+				$pageClass = $className;
+			}
+		}
+
+		if($template->id) $this->pageClassNames[$template->id] = $pageClass;
+		
+		if(!$withNamespace) $pageClass = wireClassName($pageClass, false);
+
+		return $pageClass;
+	}
+
+
 	/**
 	 * Set a Permission for a Template for and specific Role
 	 * 
@@ -637,6 +770,44 @@ class Templates extends WireSaveableItems {
 		return $updated; 
 	}
 
+	/**
+	 * Hook called when a Template detects that its file has changed
+	 * 
+	 * Note that the hook is not called until something in the system (like a page render) asks for the template’s filename.
+	 * That’s because it would not be efficient for PW to check the file for every template in the system on every request. 
+	 * 
+	 * #pw-hooker
+	 * 
+	 * @param Template $template
+	 * @since 3.0.141
+	 * 
+	 */
+	public function ___fileModified(Template $template) {
+		if(empty($this->fileModTemplates)) {
+			// add hook on first call
+			$this->addHookAfter('ProcessWire::finished', $this, '_hookFinished');
+		}
+		$this->fileModTemplates[$template->id] = $template;
+	}
+	
+	/**
+	 * Saves templates that had modified files to update 'modified' and 'ns' properties after the request is complete
+	 *
+	 * #pw-internal
+	 *
+	 * @param HookEvent $e
+	 * @since 3.0.141
+	 *
+	 */
+	public function _hookFinished(HookEvent $e) {
+		if($e) {}
+		foreach($this->fileModTemplates as $id => $template) {
+			if($template->isChanged('modified') || $template->isChanged('ns')) {
+				$template->save();
+			}
+		}
+		$this->fileModTemplates = array();
+	}
 
 	/**
 	 * FUTURE USE: Is the parent/child relationship allowed?

@@ -11,6 +11,7 @@
  * @property string $pattern HTML5 pattern attribute
  * @property string $initValue Optional initial/default value
  * @property bool $stripTags Should HTML tags be stripped from value?
+ * @property bool $noTrim By default whitespace is trimmed from value, set this to true to bypass that behavior (default=false).
  * @property bool $useLanguages When combined with multi-language support, setting this to true will provide one input per language. Get/set each language value with the "value[languageID]" property, and just "value" for default language. 
  * @property bool|int $requiredAttr When combined with "required" option, this also makes it use the HTML5 "required" attribute. (default=false)
  * @property int $showCount Show a character counter (1) or word counter (2) or neither (0). Recommended value is 1 when using minlength or maxlength.
@@ -37,8 +38,6 @@ class InputfieldText extends Inputfield {
 	/**
 	 * Construct
 	 * 
-	 * @throws WireException
-	 * 
 	 */
 	public function __construct() {
 		parent::__construct();
@@ -51,14 +50,19 @@ class InputfieldText extends Inputfield {
 		$this->set('requiredAttr', 0);
 		$this->set('initValue', ''); // optional initial value
 		$this->set('stripTags', false); // strip tags from input?
+		$this->set('noTrim', false);
 		$this->set('showCount', self::showCountNone);
-
+	}
+	
+	public function wired() {
 		// if multi-language, support placeholders for each language
+		/** @var Languages $languages */
 		$languages = $this->wire('languages');
 		if($languages) foreach($languages as $language) {
 			// set to blank value so that Field::getInputfield() will recogize this setting is for InputfieldText 
 			if(!$language->isDefault()) $this->set("placeholder$language", '');
 		}
+		parent::wired();
 	}
 
 	/**
@@ -125,15 +129,13 @@ class InputfieldText extends Inputfield {
 		
 		if(empty($attrs['size'])) {
 			unset($attrs['size']); 
-			$attrs['class'] = (empty($attrs['class']) ? '' : $attrs['class'] . ' ') . 'InputfieldMaxWidth';
+			if(!$this->hasClass('InputfieldSetWidth')) {
+				$attrs['class'] = (empty($attrs['class']) ? '' : $attrs['class'] . ' ') . 'InputfieldMaxWidth';
+			}
 		}
 		
 		if(!strlen($attrs['value']) && $this->initValue) {
 			$attrs['value'] = $this->initValue; 
-		}
-
-		if($this->required && $this->requiredAttr && !$this->getSetting('showIf') && !$this->getSetting('requiredIf')) {
-			$attrs['required'] = 'required';
 		}
 
 		if(isset($attrs['minlength'])) {
@@ -161,7 +163,7 @@ class InputfieldText extends Inputfield {
 	 * 
 	 * @param array|string $key
 	 * @param array|int|string $value
-	 * @return $this
+	 * @return Inputfield|InputfieldText|$this
 	 * 
 	 */
 	public function setAttribute($key, $value) {
@@ -193,6 +195,7 @@ class InputfieldText extends Inputfield {
 				'maxLength' => $this->maxlength, 
 				'maxBytes' => $this->maxlength*4, 
 				'stripTags' => false,
+				'trim' => $this->noTrim ? false : true,
 				)); 
 		}
 		
@@ -249,7 +252,7 @@ class InputfieldText extends Inputfield {
 			}
 			
 			if($maxlength > 0) {
-				$dirtyValue = trim($input->$name);
+				$dirtyValue = $this->noTrim ? (string) $input->$name : trim($input->$name);
 				$dirtyLength = $this->getValueLength($dirtyValue);
 				if($dirtyLength > $maxlength) {
 					$this->error(sprintf(
@@ -272,23 +275,6 @@ class InputfieldText extends Inputfield {
 	public function ___getConfigInputfields() {
 		
 		$inputfields = parent::___getConfigInputfields();
-
-		/** @var InputfieldCheckbox $required */
-		$required = $inputfields->getChildByName('required');
-		
-		if($required) {
-			$required->set('columnWidth', 50);
-			/** @var InputfieldCheckbox $field */
-			$field = $this->modules->get('InputfieldCheckbox');
-			$field->attr('name', 'requiredAttr');
-			$field->label = $this->_('Also use HTML5 “required” attribute?');
-			$field->showIf = "required=1, showIf='', requiredIf=''";
-			$field->description = $this->_('Use only on fields *always* visible to the user.');
-			$field->icon = 'html5';
-			$field->columnWidth = 50;
-			if($this->requiredAttr) $field->attr('checked', 'checked');
-			$required->getParent()->insertAfter($field, $required);
-		}
 
 		/** @var InputfieldInteger $field */
 		$field = $this->modules->get('InputfieldInteger');

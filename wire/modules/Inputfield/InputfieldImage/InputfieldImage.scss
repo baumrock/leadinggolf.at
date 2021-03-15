@@ -48,6 +48,8 @@ $focusPointCircleSize: 40px;
 
 // error listing
 .InputfieldImageErrors {
+	padding-left: 0;
+	margin-left: 0;
 	li {
 		margin-bottom: .5em;
 		margin-top: 0;
@@ -66,6 +68,16 @@ $focusPointCircleSize: 40px;
 	margin-right: -.6em;
 	display: block;
 	list-style: none;
+}
+
+.gridImage .gridImage__overflow, // grid view(s)
+.InputfieldImageEditAll .gridImage .gridImage__overflow img, // list view
+.InputfieldImageEdit__image { // clicked image in editor in grid view
+	// the following creates a checkerboard pattern (for seeing transparency)
+	background-color: #fefefe;
+	background-image: linear-gradient(45deg, #cbcbcb 25%, transparent 25%, transparent 75%, #cbcbcb 75%, #cbcbcb), linear-gradient(45deg, #cbcbcb 25%, transparent 25%, transparent 75%, #cbcbcb 75%, #cbcbcb);
+	background-size: 16px 16px;
+	background-position: 0 0, 8px 8px;
 }
 
 // An individual image grid item
@@ -93,11 +105,6 @@ $focusPointCircleSize: 40px;
 		height: 100%;
 		overflow: hidden;
 		position: relative;
-		// the following creates a checkerboard pattern (for seeing transparency)
-		background-color: #fefefe;
-		background-image: linear-gradient(45deg, #cbcbcb 25%, transparent 25%, transparent 75%, #cbcbcb 75%, #cbcbcb), linear-gradient(45deg, #cbcbcb 25%, transparent 25%, transparent 75%, #cbcbcb 75%, #cbcbcb);
-		background-size: 16px 16px;
-		background-position: 0 0, 8px 8px;
 
 		& > img {
 			position: absolute;
@@ -457,7 +464,7 @@ $focusPointCircleSize: 40px;
 		display: inline-block;
 		display: flex;
 		vertical-align: top;
-		align-items: center;
+		// align-items: center;
 		justify-content: space-around;
 		width: 300px;
 		border-right: 1px solid #eee;
@@ -505,8 +512,11 @@ $focusPointCircleSize: 40px;
 		padding: 20px;
 		flex-grow: 1;
 
-		input {
-			width: 100%;
+		.InputfieldFileDescription,
+		.InputfieldFileTags {
+			input {
+				width: 100%;
+			}
 		}
 	}
 
@@ -704,7 +714,7 @@ $focusPointCircleSize: 40px;
 			top: 0;
 			left: 0;
 			float: left;
-			background: initial;
+			background: none; // initial
 			display: block;
 			height: auto !important;
 			width: 23%; 
@@ -723,7 +733,7 @@ $focusPointCircleSize: 40px;
 				-ms-transform: none;
 				transform: none;
 				width: 100%;
-				max-width: 100% important;
+				max-width: 100% !important;
 				height: initial !important;
 				cursor: move;
 			}
@@ -778,7 +788,7 @@ $focusPointCircleSize: 40px;
 			}
 		}
 		&:hover .gridImage__inner {
-			background: initial;
+			background: none; // initial;
 		}
 
 		.InputfieldImageEdit {
@@ -878,8 +888,13 @@ $focusPointCircleSize: 40px;
 				padding: 0;
 
 				img {
-					width: 100% important;
+					width: 100% !important;
 					height: auto !important;
+				}
+				
+				> .focusArea { // #728
+					top: 0;
+					left: 0;
 				}
 				
 			}

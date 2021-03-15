@@ -31,36 +31,6 @@ class CommentArray extends PaginatedArray implements WirePaginatable {
 	protected $field = null;
 
 	/**
-	 * Total number of comments, including those here and others that aren't, but may be here in pagination.
-	 * 
-	 * @var int
-	 * 
-	 */
-	protected $numTotal = 0;
-
-	/**
-	 * If this CommentArray is a partial representation of a larger set, this will contain the max number 
-	 * of comments allowed to be present/loaded in the CommentArray at once.
-	 *
-	 * May vary from count() when on the last page of a result set.
-	 * As a result, paging routines should refer to their own itemsPerPage rather than count().
-	 * Applicable for paginated result sets. This number is not enforced for adding items to this CommentArray.
-	 *
-	 * @var int
-	 * 
-	 */
-	protected $numLimit = 0;
-
-	/**
-	 * If this CommentArray is a partial representation of a larger set, this will contain the starting result 
-	 * number if previous results preceded it.
-	 *
-	 * @var int
-	 * 
-	 */
-	protected $numStart = 0;
-
-	/**
 	 * Per the WireArray interface, is the item a Comment
 	 * 
 	 * @param Wire|Comment $item
@@ -86,14 +56,6 @@ class CommentArray extends PaginatedArray implements WirePaginatable {
 	 *
 	 */
 	public function render(array $options = array()) {
-		$defaultOptions = array(
-			'useGravatar' => ($this->field ? $this->field->get('useGravatar') : ''),
-			'useVotes' => ($this->field ? $this->field->get('useVotes') : 0),
-			'useStars' => ($this->field ? $this->field->get('useStars') : 0),
-			'depth' => ($this->field ? (int) $this->field->get('depth') : 0),
-			'dateFormat' => ($this->field ? $this->field->get('dateFormat') : 'relative'),
-			);
-		$options = array_merge($defaultOptions, $options);
 		$commentList = $this->getCommentList($options); 
 		return $commentList->render();
 	}
@@ -143,12 +105,35 @@ class CommentArray extends PaginatedArray implements WirePaginatable {
 	/**
 	 * Return instance of CommentList object
 	 * 
-	 * @param array $options See CommentList::$options for details
+	 * @param array $options See CommentList::$options for details, plus: 
+	 *  - `className` (string): PHP class name to use for CommentList (default='CommentList')
 	 * @return CommentList
 	 *
 	 */
 	public function getCommentList(array $options = array()) {
-		return $this->wire(new CommentList($this, $options)); 	
+		$field = $this->field;
+		if($field) {
+			$defaults = array(
+				'useGravatar' => $field->get('useGravatar'),
+				'useVotes' => $field->get('useVotes'),
+				'useStars' => $field->get('useStars'),
+				'depth' => $field->get('depth'),
+				'dateFormat' => $field->get('dateFormat'),
+				'className' => 'CommentList',
+			);
+		} else {
+			$defaults = array(
+				'dateFormat' => 'relative',
+				'className' => 'CommentList',
+			);
+		}
+		$options = array_merge($defaults, $options);
+		$file = __DIR__ . '/' . $options['className'] . '.php';
+		$className = wireClassName($options['className'], true);
+		if(!class_exists($className) && is_file($file)) include_once($file); 
+		unset($options['className']); 
+		
+		return $this->wire(new $className($this, $options)); 	
 	}
 
 	/**
@@ -160,8 +145,20 @@ class CommentArray extends PaginatedArray implements WirePaginatable {
 	 * 
 	 */
 	public function getCommentForm(array $options = array()) {
-		if(!$this->page) throw new WireException("You must set a page to this CommentArray before using it i.e. \$ca->setPage(\$page)"); 
-		return $this->wire(new CommentForm($this->page, $this, $options)); 
+		$defaults = array(
+			'className' => 'CommentForm',
+			'depth' => ($this->field ? (int) $this->field->get('depth') : 0)
+		);
+		$options = array_merge($defaults, $options);
+		if(!$this->page) {
+			throw new WireException("You must set a page to this CommentArray before using it i.e. \$ca->setPage(\$page)");
+		}
+		$file = __DIR__ . '/' . $options['className'] . '.php';
+		$className = wireClassName($options['className'], true);
+		if(!class_exists($className) && is_file($file)) include_once($file);
+		unset($options['className']); 
+		
+		return $this->wire(new $className($this->page, $this, $options)); 
 	}
 
 	/**
@@ -177,7 +174,7 @@ class CommentArray extends PaginatedArray implements WirePaginatable {
 	/**
 	 * Set the Field that these comments are on 
 	 * 
-	 * @param Field $field
+	 * @param CommentField|Field $field
 	 *
 	 */ 
 	public function setField(Field $field) {
@@ -197,7 +194,7 @@ class CommentArray extends PaginatedArray implements WirePaginatable {
 	/**
 	 * Get the Field that these comments are on
 	 * 
-	 * @return Field
+	 * @return CommentField|Field
 	 *
 	 */
 	public function getField() {
@@ -274,6 +271,7 @@ class CommentArray extends PaginatedArray implements WirePaginatable {
 		if($getCount) return array($stars, $count);
 		return $stars;
 	}
+	
 	/**
 	 * Render combined star rating for all comments in this CommentsArray
 	 *
@@ -303,6 +301,41 @@ class CommentArray extends PaginatedArray implements WirePaginatable {
 		$out = $commentStars->render($stars, $options['input']);
 		if($showCount) $out .= $commentStars->renderCount((int) $count, $stars, $options['schema']);
 		return $out;
+	}
+	
+	/**
+	 * Track an item added
+	 *
+	 * @param Comment $item
+	 * @param int|string $key
+	 *
+	 */
+	protected function trackAdd($item, $key) {
+		parent::trackAdd($item, $key);
+		if(!$item->getPageComments(false)) $item->setPageComments($this);
+	}
+
+	/**
+	 * Does this CommentArray have the given Comment (or comment ID)?
+	 * 
+	 * Note: this method is very specific in purpose, accepting only a Comment object or ID. 
+	 * You can use the has() method for more flexibility.
+	 * 
+	 * @param Comment|int $comment
+	 * @return bool
+	 * @since 3.0.149
+	 * @see WireArray::has()
+	 * 
+	 */
+	public function hasComment($comment) {
+		$commentID = $comment instanceof Comment ? $comment->id : (int) $comment;
+		$has = false;
+		foreach($this as $item) {
+			if($item->id !== $commentID) continue;
+			$has = true;
+			break;
+		}
+		return $has;	
 	}
 }
 

@@ -16,6 +16,7 @@
  * https://processwire.com
  * 
  * @method WireArray and($item)
+ * @method static WireArray new($items = array()) 
  * @property int $count Number of items
  * @property Wire|null $first First item
  * @property Wire|null $last Last item
@@ -82,6 +83,22 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	protected $duplicateChecking = true;
 
 	/**
+	 * Flags for PHP sort functions
+	 * 
+	 * @var int
+	 * 
+	 */
+	protected $sortFlags = 0; // 0 == SORT_REGULAR
+
+	/**
+	 * Construct
+	 * 
+	 */
+	public function __construct() {
+		if($this->className() === 'WireArray') $this->duplicateChecking = false;	
+	}
+
+	/**
 	 * Is the given item valid for storange in this array?
 	 * 
 	 * Template method that descending classes may use to validate items added to this WireArray
@@ -93,7 +110,10 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	 *
 	 */
 	public function isValidItem($item) {
-		return $item instanceof Wire; 
+		if($item instanceof Wire) return true;
+		$className = $this->className();
+		if($className === 'WireArray' || $className === 'PaginatedArray') return true;
+		return false;
 	}
 
 	/**
@@ -174,7 +194,9 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	 */
 	public function makeBlankItem() {
 		$class = wireClassName($this, false); 
-		if($class != 'WireArray') throw new WireException("Class '$class' doesn't yet implement method 'makeBlankItem()' and it needs to."); 
+		if($class != 'WireArray' && $class != 'PaginatedArray') {
+			throw new WireException("Class '$class' doesn't yet implement method 'makeBlankItem()' and it needs to.");
+		}
 		return null;
 	}
 
@@ -211,7 +233,7 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	 * Import the given item(s) into this WireArray.
 	 * 
 	 * - Adds imported items to the end of the WireArray. 
-	 * - Skips over any items already present in the WireArray. 
+	 * - Skips over any items already present in the WireArray (when duplicateChecking is enabled)
 	 * 
 	 * #pw-group-manipulation
 	 * 
@@ -222,13 +244,18 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	 */
 	public function import($items) {
 
-		if(!is_array($items) && !self::iterable($items)) 
-			throw new WireException('WireArray cannot import non arrays or non-iterable objects'); 
-
+		if(!is_array($items) && !self::iterable($items)) {
+			throw new WireException('WireArray cannot import non arrays or non-iterable objects');
+		}
+	
 		foreach($items as $key => $value) {
-			if(($k = $this->getItemKey($value)) !== null) $key = $k;
-			if(isset($this->data[$key])) continue; // won't overwrite existing keys
-			$this->set($key, $value); 
+			if($this->duplicateChecking) {
+				if(($k = $this->getItemKey($value)) !== null) $key = $k;
+				if(isset($this->data[$key])) continue; // won't overwrite existing keys
+				$this->set($key, $value);
+			} else {
+				$this->add($value); 
+			}
 		}
 
 		return $this;
@@ -522,8 +549,8 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 
 		// if given an array of keys, return all matching items
 		if(is_array($key)) { 
+			/** @var array $key */
 			if(ctype_digit(implode('', array_keys($key)))) {
-				/** @var array $key */
 				$items = array();
 				foreach($key as $k) {
 					$item = $this->get($k);
@@ -798,6 +825,7 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	 */
 	public function getRandom($num = 1, $alwaysArray = false) {
 		$items = $this->makeNew(); 
+		if($num < 1) return $items;
 		$count = $this->count();
 		if(!$count) {
 			if($num == 1 && !$alwaysArray) return null;
@@ -1238,10 +1266,15 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	 * #pw-group-manipulation
 	 * 
 	 * @param string|array $properties Field names to sort by (CSV string or array). 
+	 * @param int|null $flags Optionally specify sort flags (see sortFlags method for details). 
 	 * @return $this reference to current instance.
 	 */
-	public function sort($properties) {
-		return $this->_sort($properties);
+	public function sort($properties, $flags = null) {
+		$_flags = $this->sortFlags; // remember
+		if(is_int($flags)) $this->sortFlags($flags);
+		$result = $this->_sort($properties);
+		if(is_int($flags) && $flags !== $_flags) $this->sortFlags($_flags); // restore
+		return $result;
 	}
 
 	/**
@@ -1273,6 +1306,32 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 		$this->data = $data; 
 
 		return $this;
+	}
+
+	/**
+	 * Get or set sort flags that affect behavior of any sorting functions
+	 * 
+	 * The following constants may be used when setting the sort flags:
+	 * 
+	 * - `SORT_REGULAR` compare items normally (don’t change types)
+	 * - `SORT_NUMERIC` compare items numerically
+	 * - `SORT_STRING` compare items as strings
+	 * - `SORT_LOCALE_STRING` compare items as strings, based on the current locale
+	 * - `SORT_NATURAL` compare items as strings using “natural ordering” like natsort()
+	 * - `SORT_FLAG_CASE` can be combined (bitwise OR) with SORT_STRING or SORT_NATURAL to sort strings case-insensitively
+	 *
+	 * For more details, see `$sort_flags` argument at: https://www.php.net/manual/en/function.sort.php
+	 * 
+	 * #pw-group-manipulation
+	 * 
+	 * @param bool $sortFlags Optionally specify flag(s) to set
+	 * @return int Returns current flags
+	 * @since 3.0.129
+	 * 
+	 */
+	public function sortFlags($sortFlags = false) {
+		if(is_int($sortFlags)) $this->sortFlags = $sortFlags;
+		return $this->sortFlags;
 	}
 
 	/**
@@ -1336,8 +1395,8 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 		}
 
 		// sort the items by the keys we collected
-		if($reverse) krsort($sortable);
-			else ksort($sortable); 
+		if($reverse) krsort($sortable, $this->sortFlags);
+			else ksort($sortable, $this->sortFlags); 
 
 		// add the items that resolved to no key to the end, as an array
 		$sortable[] = $unidentified; 
@@ -1391,7 +1450,7 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	 * This function contains additions and modifications by @niklaka.
 	 *
 	 * @param string|array|Selectors $selectors Selector string|array to use as the filter.
-	 * @param bool $not Make this a "not" filter? (default is false)
+	 * @param bool|int $not Make this a "not" filter? Use int 1 for “not all” mode as if selectors had brackets around it. (default is false)
 	 * @return $this reference to current [filtered] instance
 	 *
 	 */
@@ -1412,6 +1471,8 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 		$start = 0;
 		$limit = null;
 		$eq = null;
+		$notAll = $not === 1;
+		if($notAll) $not = true;
 
 		// leave sort, limit and start away from filtering selectors
 		foreach($selectors as $selector) {
@@ -1448,7 +1509,10 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 		
 		// now filter the data according to the selectors that remain
 		foreach($this->data as $key => $item) {
+			$qty = 0;
+			$qtyMatch = 0;	
 			foreach($selectors as $selector) {
+				$qty++;
 				if(is_array($selector->field)) {
 					$value = array();
 					foreach($selector->field as $field) $value[] = (string) $this->getItemPropertyValue($item, $field);
@@ -1456,9 +1520,15 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 					$value = (string) $this->getItemPropertyValue($item, $selector->field);
 				}
 				if($not === $selector->matches($value) && isset($this->data[$key])) {
+					$qtyMatch++;
+					if($notAll) continue; // will do this outside the loop of all in $selectors match
 					$this->trackRemove($this->data[$key], $key);
 					unset($this->data[$key]);
 				}
+			}
+			if($notAll && $qty && $qty === $qtyMatch) {
+				$this->trackRemove($this->data[$key], $key);
+				unset($this->data[$key]);
 			}
 		}
 
@@ -1552,6 +1622,20 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	public function not($selector) {
 		// Same as filterData, but for public interface with the $not option specifically set to "true".
 		return $this->filterData($selector, true); 
+	}
+
+	/**
+	 * Like the not() method but $selector evaluated as if it had (brackets) around it 
+	 *
+	 * #pw-internal Until we've got a better description for what this does
+	 *
+	 * @param string|array|Selectors $selector
+	 * @return $this reference to current instance.
+	 * @see filterData
+	 *
+	 */
+	public function notAll($selector) {
+		return $this->filterData($selector, 1); 
 	}
 
 	/**
@@ -1809,6 +1893,8 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	protected function trackAdd($item, $key) {
 		if($key) {}
 		if($this->trackChanges()) $this->itemsAdded[] = $item;
+		// wire this WireArray to the same instance of $item, if it isn’t already wired
+		if($this->_wire === null && $item instanceof Wire && $item->isWired()) $item->wire($this);
 	}
 
 	/**
@@ -1967,13 +2053,18 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 			'append' => ''
 			);
 
+		if(!count($this->data)) return '';
+			
+		$firstItem = reset($this->data);
+		$itemIsObject = is_object($firstItem);
+
 		if(!is_string($delimiter) && is_callable($delimiter)) {
 			// first delimiter argument omitted and a function was supplied 
 			// property is assumed to be blank
 			if(is_array($property)) $options = $property; 
 			$property = $delimiter; 
 			$delimiter = '';
-		} else if(empty($property) || is_array($property)) {
+		} else if($itemIsObject && (empty($property) || is_array($property))) {
 			// delimiter was omitted, forcing $property to be first arg
 			if(is_array($property)) $options = $property; 
 			$property = $delimiter; 
@@ -1986,8 +2077,13 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 		$n = 0;
 
 		foreach($this as $key => $item) {
-			if($isFunction) $value = $property($item, $key); 
-				else $value = $item->get($property); 
+			if($isFunction) {
+				$value = $property($item, $key);
+			} else if(strlen($property) && $itemIsObject) {
+				$value = $item->get($property);
+			} else {
+				$value = $item;
+			}
 			if(is_array($value)) $value = 'array(' . count($value) . ')';
 			$value = (string) $value; 
 			if(!strlen($value) && $options['skipEmpty']) continue; 
@@ -2018,7 +2114,7 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	 * #pw-group-retrieval
 	 * #pw-group-fun-tools
 	 *
-	 * @param string|callable|array $property Property or properties to retrieve, or callable function that shuld receive items.
+	 * @param string|callable|array $property Property or properties to retrieve, or callable function that should receive items.
 	 * @param array $options Options to modify default behavior:
 	 *  - `getMethod` (string): Method to call on each item to retrieve $property (default = "get")
 	 *  - `key` (string|null): Property of Wire objects to use for key of array, or omit (null) for non-associative array (default).
@@ -2026,7 +2122,7 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	 * @see WireArray::each(), WireArray::implode()
 	 *
 	 */
-	public function explode($property, array $options = array()) {
+	public function explode($property = '', array $options = array()) {
 		$defaults = array(
 			'getMethod' => 'get', // method used to get value from each item
 			'key' => null,
@@ -2037,6 +2133,10 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 		$isFunction = !$isArray && !is_string($property) && is_callable($property);
 		$values = array();
 		foreach($this as $key => $item) {
+			if(!is_object($item)) {
+				$values[$key] = $item;
+				continue;
+			}
 			if(!empty($options['key']) && is_string($options['key'])) {
 				$key = $item->get($options['key']);	
 				if(!is_string($key) || !is_int($key)) $key = (string) $key;	
@@ -2253,7 +2353,7 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	 * Perform an action upon each item in the WireArray
 	 * 
 	 * This is typically used to execute a function for each item, or to build a string 
-	 * or array from each item.
+	 * or array from each item. 
 	 * 
 	 * ~~~~~
 	 * // Generate navigation list of page children: 
@@ -2261,8 +2361,16 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	 *   return "<li><a href='$child->url'>$child->title</a></li>";
 	 * });
 	 * 
+	 * // If 2 arguments specified to custom function(), 1st is the key, 2nd is the value
+	 * echo $page->children()->each(function($key, $child) {
+	 *   return "<li><a href='$child->url'>$key: $child->title</a></li>";
+	 * });
+	 * 
 	 * // Same as above using different method (template string):
 	 * echo $page->children()->each("<li><a href='{url}'>{title}</a></li>");
+	 * 
+	 * // If WireArray used to hold non-object items, use only {key} and/or {value}
+	 * echo $items->each('<li>{key}: {value}</li>');
 	 * 
 	 * // Get an array of all "title" properties 
 	 * $titles = $page->children()->each("title"); 
@@ -2312,7 +2420,11 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 					if(is_null($result)) $result = '';
 					// if returned value resulted in {tags}, go ahead and parse them
 					if(strpos($val, '{') !== false && strpos($val, '}')) {
-						$val = wirePopulateStringTags($val, $item);
+						if(is_object($item)) {
+							$val = wirePopulateStringTags($val, $item);
+						} else {
+							$val = wirePopulateStringTags($val, array('key' => $index, 'value' => $item));
+						}
 					}
 					$result .= $val;
 				}
@@ -2320,8 +2432,12 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 		} else if(is_string($func) && strpos($func, '{') !== false && strpos($func, '}')) {
 			// string with variables
 			$result = '';
-			foreach($this as $item) {
-				$result .= wirePopulateStringTags($func, $item);
+			foreach($this as $key => $item) {
+				if(is_object($item)) {
+					$result .= wirePopulateStringTags($func, $item);
+				} else {
+					$result .= wirePopulateStringTags($func, array('key' => $key, 'value' => $item));
+				}
 			}
 		} else {
 			// array or string or null
@@ -2330,6 +2446,36 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 		}
 	
 		return $result === null ? $this : $result;
+	}
+
+	/**
+	 * Divide this WireArray into $qty slices and return array of them (each being another WireArray)
+	 * 
+	 * This is not destructive to the original WireArray as it returns new WireArray objects. 
+	 *
+	 * #pw-group-retrieval
+	 * #pw-group-traversal
+	 * 
+	 * @param int $qty Number of slices
+	 * @return array Array of WireArray objects
+	 * 
+	 */
+	public function slices($qty) {
+		$slices = array();
+		if($qty < 1) return $slices;
+		$total = $this->count();
+		$limit = $total ? ceil($total / $qty) : 0;
+		$start = 0;
+		for($n = 0; $n < $qty; $n++) {
+			if($start < $total) {
+				$slice = $this->slice($start, $limit);
+			} else {
+				$slice = $this->makeNew();
+			}
+			$slices[] = $slice;
+			$start += $limit;
+		}
+		return $slices;
 	}
 
 	/**
@@ -2352,29 +2498,127 @@ class WireArray extends Wire implements \IteratorAggregate, \ArrayAccess, \Count
 	 *
 	 */
 	public function __debugInfo() {
-		$info = parent::__debugInfo();
-		$info['count'] = $this->count();
+	
+		$info = array(
+			'count' => $this->count(),
+			'items' => array(),
+		);
+		
+		$info = array_merge($info, parent::__debugInfo());
+		
 		if(count($this->data)) {
 			$info['items'] = array();
 			foreach($this->data as $key => $value) {
-				if(is_object($value)) {
-					if($value instanceof Page) {
-						$value = '/' . ltrim($value->path(), '/');
-					} else if($value instanceof WireData) {
-						$_value = $value;
-						$value = $value->get('name');
-						if(!$value) $value = $_value->get('id');
-						if(!$value) $value = $_value->className();
-					} else {
-						// keep $value as it is
-					}
-				}
-				$info['items'][$key] = $value; 
+				if(is_object($value) && $value instanceof Wire) $key = $value->className() . ":$key";
+				$info['items'][$key] = $this->debugInfoItem($value);
 			}
 		}
+
 		if(count($this->extraData)) $info['extraData'] = $this->extraData;
-		if(count($this->itemsAdded)) $info['itemsAdded'] = $this->itemsAdded;
-		if(count($this->itemsRemoved)) $info['itemsRemoved'] = $this->itemsRemoved;
+		
+		$trackers = array(
+			'itemsAdded' => $this->itemsAdded, 
+			'itemsRemoved' => $this->itemsRemoved
+		);
+		
+		foreach($trackers as $key => $value) {
+			if(!count($value)) continue;
+			$info[$key] = array();
+			foreach($value as $k => $v) {
+				$info[$key][] = $this->debugInfoItem($v); 
+			}
+		}
+		
 		return $info;
+	}
+
+	/**
+	 * Return debug info for one item from this WireArray
+	 * 
+	 * #pw-internal
+	 * 
+	 * @param mixed $item
+	 * @return mixed|null|string
+	 * 
+	 */
+	public function debugInfoItem($item) {
+		if(is_object($item)) {
+			if($item instanceof Page) {
+				$item = $item->debugInfoSmall();
+			} else if($item instanceof WireData) {
+				$_item = $item;
+				$item = $item->get('name');
+				if(!$item) $item = $_item->get('id');
+				if(!$item) $item = $_item->className();
+			} else {
+				// keep $value as it is
+			}
+		}
+		return $item;
+	}
+
+	/**
+	 * Static method caller, primarily for support of WireArray::new() method
+	 * 
+	 * @param string $name
+	 * @param array $arguments
+	 * @return mixed
+	 * @throws WireException
+	 * 
+	 */
+	public static function __callStatic($name, $arguments) {
+		$class = get_called_class();
+		if($name === 'new') {
+			$n = count($arguments);
+			if($n === 0) {
+				// no items specified
+				$items = null;
+			} else if($n === 1) {
+				$items = reset($arguments);
+				if(is_array($items) || $items instanceof WireArray) {
+					// multiple items specified in one argument				
+				} else {
+					// one item specified
+					$items = array($items);
+				}
+			} else {
+				// multiple items specified as arguments
+				$items = $arguments;
+			}
+			return self::newInstance($items, $class);
+		} else {
+			throw new WireException("Unrecognized static method: $class::$name()");
+		}
+	}
+
+	/**
+	 * Create new instance of this class
+	 * 
+	 * Method for internal use, use `$a = WireArray::new($items)` or `$a = WireArrray($items)` instead. 
+	 * 
+	 * #pw-internal 
+	 * 
+	 * @param array|WireArray|null $items Items to add or omit (null) for none
+	 * @param string $class Class name to instantiate or omit for called class
+	 * @return WireArray
+	 * 
+	 */
+	public static function newInstance($items = null, $class = '') {
+		if(empty($class)) $class = get_called_class();
+		/** @var WireArray $a */
+		$a = new $class();
+		if($items instanceof WireArray) {
+			$items->wire($a);
+			$a->import($items);
+		} else if(is_array($items)) {
+			if(ctype_digit(implode('0', array_keys($items)))) {
+				$a->import($items);
+			} else {
+				$a->setArray($items);
+			}
+		} else if($items !== null) {
+			$a->add($items);
+		}
+		return $a;
 	}
 }

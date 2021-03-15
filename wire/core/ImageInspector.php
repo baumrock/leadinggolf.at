@@ -135,7 +135,7 @@ class ImageInspector extends WireData {
 		if(is_array($additionalInfo) && $parseAppmarker) {
 			$appmarker = array();
 			foreach($additionalInfo as $k => $v) {
-				$appmarker[$k] = substr($v, 0, strpos($v, null));
+				$appmarker[$k] = substr($v, 0, strpos($v, chr(0)));
 			}
 			$this->info['appmarker'] = $appmarker;
 			if(isset($additionalInfo['APP13'])) {
@@ -158,7 +158,7 @@ class ImageInspector extends WireData {
 	 * Check orientation (@horst)
 	 *
 	 * @param array
-	 * @return bool
+	 * @return array
 	 * @todo there is already a checkOrientation method in ImageSizerEngine - do we need both?
 	 *
 	 */
@@ -175,7 +175,13 @@ class ImageInspector extends WireData {
 			'8' => array(90, 0)
 		);
 		$result = array('orientation' => 0, 'rotate' => 0, 'flip' => 0);
-		if(!function_exists('exif_read_data')) return $result;
+		$supportedExifMimeTypes = array('image/jpeg', 'image/tiff'); // hardcoded by PHP
+		$mime = isset($this->info['mime']) ? $this->info['mime'] : 'no';
+
+		if(!function_exists('exif_read_data') || !in_array($mime, $supportedExifMimeTypes)) {
+			return $result;
+		}
+
 		$exif = @exif_read_data($filename, 'IFD0');
 		if(!is_array($exif)
 			|| !isset($exif['Orientation'])
@@ -272,8 +278,6 @@ class ImageInspector extends WireData {
 
 	/**
 	 * parse JPEG Image and collect information into $this->info
-	 *
-	 * @return bool
 	 *
 	 */
 	protected function loadImageInfoJpg() {

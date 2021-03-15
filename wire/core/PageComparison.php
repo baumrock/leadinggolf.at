@@ -5,7 +5,7 @@
  *
  * Provides implementation for Page comparison functions.
  *
- * ProcessWire 3.x, Copyright 2016 by Ryan Cramer
+ * ProcessWire 3.x, Copyright 2020 by Ryan Cramer
  * https://processwire.com
  *
  */
@@ -13,30 +13,174 @@
 class PageComparison {
 
 	/** 
-	 * Does this page have the specified status number or template name? 
+	 * Is this page of the given type? (status, template, etc.)
  	 *
- 	 * See status flag constants at top of Page class
-	 *
 	 * @param Page $page
-	 * @param int|string|Selectors $status Status number or Template name or selector string/object
+	 * @param int|string|array|Selectors|Page|Template $status One of the following: 
+	 *  - Status expressed as int (using Page::status* constants) 
+	 *  - Status expressed as string/name, i.e. "hidden" (3.0.150+)
+	 *  - Template name, indicating page type
+	 *  - Page or Template object (3.0.150+)
+	 *  - Selector string or Selectors object that must match
+	 *  - Array of any of the above where all have to match (3.0.150+)
 	 * @return bool
 	 *
 	 */
 	public function is(Page $page, $status) {
+	
+		$is = false;
+		
+		if(is_string($status) && ctype_digit($status)) {
+			$status = (int) $status;
+		}
 
 		if(is_int($status)) {
-			return ((bool) ($page->status & $status)); 
+			// status flag integer
+			$is = $page->status & $status; 
+			
+		} else if(is_object($status)) {
+			// Page, Template or Selectors object
+			if($status instanceof Page && $status->id === $page->id) {
+				$is = true;
+			} else if($status instanceof Template && "$page->template" === "$status") {
+				$is = true;
+			} else if($status instanceof Selectors || $status instanceof Selector) {
+				$is = $page->matches($status);
+			}
+			
+		} else if(is_array($status)) {
+			// array where all items have to match an is() call
+			$n = 0;
+			foreach($status as $val) {
+				if(is_array($val)) break; // no multi-dimensional
+				if($this->is($page, $val)) $n++;
+			}
+			if($n && count($status) === $n) $is = true;
 
-		} else if(is_string($status) && $page->wire('sanitizer')->name($status) == $status) {
-			// valid template name or status name
-			if($page->template->name == $status) return true; 
+		} else if(is_string($status) && $page->wire('sanitizer')->name($status) === $status) {
+			// name string (status name or template name)
+			$statuses = Page::getStatuses();
+			if(isset($statuses[$status])) {
+				// status name
+				$is = $page->status & $statuses[$status];
+
+			} else if("$page->template" === $status) {
+				// template name
+				$is = true;
+			}
+			
+		} else if(is_string($status) && strpos($status, 'Page::status') === 0) {
+			// literal constant name in string
+			$status = __NAMESPACE__ . "\\$status";
+			$status = constant($status);
+			$is = $page->status & $status; 
 
 		} else if($page->matches($status)) { 
 			// Selectors object or selector string
-			return true; 
+			$is = true; 
 		}
 
-		return false;
+		return $is;
+	}
+
+	/**
+	 * If value is available for $key return or call $yes condition (with optional $no condition)
+	 *
+	 * This merges the capabilities of an if() statement, get() and getMarkup() methods in one,
+	 * plus some useful PW type-specific logic, providing a useful output shortcut.
+	 * 
+	 * See phpdoc in `Page::if()` for full details.
+	 *
+	 * @param Page $page
+	 * @param string|bool|int $key Name of field to check, selector string to evaluate, or boolean/int to evalute
+	 * @param string|callable|mixed $yes If value for $key is present, return or call this
+	 * @param string|callable|mixed $no If value for $key is empty, return or call this
+	 * @return mixed|string|bool
+	 * @since 3.0.126
+	 *
+	 */
+	public function _if(Page $page, $key, $yes = '', $no = '') {
+
+		/** @var Sanitizer $sanitizer */
+		$sanitizer = $page->wire('sanitizer');
+
+		// if only given a key argument, we will be returning a boolean
+		if($yes === '' && $no === '') list($yes, $no) = array(true, false);
+		
+		if(is_string($key)) $key = trim($key);
+
+		if(is_bool($key) || is_int($key)) {
+			// boolean or int
+			$val = $key;
+			$action = empty($val) ? $no : $yes;
+		} else if(is_array($key)) {
+			// PHP array 
+			$val = $key;
+			$action = count($val) ? $no : $yes;
+		} else if(ctype_digit(ltrim("$key", '-'))) {
+			// integer or string value of digits, or Wire instance string value of digits
+			$val = (int) "$key";
+			$action = empty($val) ? $no : $yes;
+		} else if(is_string($key) && wireEmpty($key)) {
+			// empty string
+			$val = $key;
+			$action = $no;
+		} else if(!ctype_alnum("$key") && Selectors::stringHasOperator($key)) {
+			// selector string
+			$val = $page->matches($key) ? 1 : 0;
+			$action = $val ? $yes : $no;
+		} else {
+			// field name or other format string accepted by $page->get()
+			$val = $page->get($key);
+			$action = wireEmpty($val) ? $no : $yes;
+		}
+
+		if(is_string($action)) {
+			// action is a string
+			$getValue = false;
+			$tools = $sanitizer->getTextTools();
+			if(($action === 'value' || $action === 'val') && !$page->template->fieldgroup->hasField($action)) {
+				// implicit 'value' or 'val' maps back to name specified in $key argument
+				$getValue = $key;
+			}
+			if(empty($action)) {
+				$result = $action;
+				
+			} else if($getValue) {
+				$result = $page->get($getValue);
+				
+			} else if($tools->hasPlaceholders($action)) {
+				// action is a getMarkup() string
+				$keyIsFieldName = $sanitizer->fieldName($key) === $key;
+				$act = $action;
+				// if value placeholders present, replace them with field name placeholders
+				foreach(array('{value}', '{val}') as $tag) {
+					// string with {val} or {value} has that tag replaced with the {field_name}
+					if(strpos($action, $tag) === false) continue;
+					// if val or value is actually the name of a field in the system, then do not override it
+					if($page->hasField(trim($tag, '{}'))) continue;
+					$action = str_replace($tag, ($keyIsFieldName ? '{' . $key . '}' : $val), $action);
+				}
+				$result = $act === $action || $tools->hasPlaceholders($action) ? $page->getMarkup($action) : $action;
+				
+			} else if($sanitizer->fieldSubfield($action, -1) === $action && $page->hasField($sanitizer->fieldSubfield($action, 0))) {
+				// action is another field name that we want to get the value for
+				$result = $page->get($action);
+			} else {
+				// action is just a string to return
+				$result = $action;
+			}
+			
+		} else if(is_callable($action)) {
+			// action is callable
+			$result = call_user_func_array($action, array($val, $key, $page));
+			
+		} else {
+			// action is a number, array or object
+			$result = $action;
+		}
+
+		return $result;
 	}
 
 	/**

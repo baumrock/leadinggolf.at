@@ -97,10 +97,15 @@
 	function loadIframeLinkPicker(editor) {
 
 		var $in = jQuery("#Inputfield_id"); 
+		var pageID;
 		if($in.length) {
-			var pageID = $in.val();
+			//if($in.hasClass('PageFrontEdit')) {
+			//	var pageID = jQuery("#" + editor.name).closest('.pw-edit').attr('data-page');
+			//} else {
+			pageID = $in.val();
+			//}
 		} else {
-			var pageID = jQuery("#" + editor.name).closest('.Inputfield').attr('data-pid');
+			pageID = jQuery("#" + editor.name).closest('.Inputfield').attr('data-pid');
 		}
 
 		// language support
@@ -148,6 +153,8 @@
 			$langWrapper = $textarea.parents('.InputfieldTable_langTabs').find('li.ui-state-active a')
 			if($langWrapper.length && typeof $langWrapper.data('lang') != "undefined") {
 				modalUrl += "&lang=" + $langWrapper.data('lang');
+			} else if(jQuery('#pw-edit-lang').length) {
+				modalUrl += "&lang=" + jQuery('#pw-edit-lang').val(); // front-end editor
 			}
 		}
 		
@@ -217,7 +224,7 @@
 			$i.find("#ProcessPageEditLinkForm").data('iframe', $iframe);
 		
 			// capture enter key in main URL text input
-			jQuery("#link_page_url", $i).keydown(function(event) {
+			jQuery("#link_page_url_input", $i).keydown(function(event) {
 				var $this = jQuery(this);
 				var val = jQuery.trim($this.val());
 				if (event.keyCode == 13) {

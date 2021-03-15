@@ -19,6 +19,7 @@
  * Item must have a gettable/settable 'id' property for this interface as well
  * 
  * @property int $id
+ * @property string $name
  *
  */
 interface Saveable {
@@ -325,6 +326,12 @@ interface WirePageEditor {
 	 */
 	public function getPage(); 	
 }
+
+/**
+ * Interface shared by all ProcessWire Null objects
+ *
+ */
+interface WireNull { }
 
 /**
  * Interface that indicates the object supports its items being paginated
