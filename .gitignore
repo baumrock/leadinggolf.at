@@ -1,0 +1,13 @@
+### exclude all assets
+/site/assets/cache/*
+/site/assets/sessions/*
+/site/assets/logs/*
+/site/assets/files/*
+/site/assets/backups/*
+/site/assets/*.zip
+
+## ignore custom config files
+/site/config-*.php
+
+## ignore updated module backups
+/site/modules/.*
