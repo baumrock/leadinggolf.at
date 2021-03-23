@@ -8,9 +8,9 @@
         </div><!--
          --><div class="layout__item layout--center u-2/3-lap-and-up">
             <div class="parallax" id="parallaxSceneCards">
-                <img class="parallax__item parallax__item--back" src="<?php echo $config->urls->templates; ?>/img/card_back.png?cache=1" />
-                <img class="parallax__item parallax__item--middle" src="<?php echo $config->urls->templates; ?>/img/card_middle.png?cache=1" />
-                <img class="parallax__item parallax__item--front" src="<?php echo $config->urls->templates; ?>/img/card_front.png?cache=1" />
+                <img class="parallax__item parallax__item--back" src="<?php echo $config->urls->templates; ?>img/card_back.png?cache=2" />
+                <img class="parallax__item parallax__item--middle" src="<?php echo $config->urls->templates; ?>img/card_middle.png?cache=2" />
+                <img class="parallax__item parallax__item--front" src="<?php echo $config->urls->templates; ?>img/card_front.png?cache=2" />
             </div>
         </div>
     </div>

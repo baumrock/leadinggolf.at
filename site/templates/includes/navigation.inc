@@ -7,7 +7,7 @@
                            ->import($rootPage->children()->slice($homeIndex));
         foreach ($menuItems as $menuItem) {
             if ($menuItem == $rootPage) {
-                echo "<li class='logo'><a class='logo__a' href='{$menuItem->url}'><img src='{$config->urls->templates}/img/logo.png' alt='{$menuItem->title}' /></a></li>";
+                echo "<li class='logo'><a class='logo__a' href='{$menuItem->url}'><img src='{$config->urls->templates}img/logo.png' alt='{$menuItem->title}' /></a></li>";
             }
             else{
                 $active = ($page == $menuItem ? ' class="active"' : '');
