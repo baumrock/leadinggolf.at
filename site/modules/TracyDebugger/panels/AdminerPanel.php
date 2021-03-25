@@ -64,6 +64,9 @@ class AdminerPanel extends BasePanel {
         elseif($this->wire('process') == 'ProcessPageList') {
             $contextLink = '&select=pages';
         }
+        elseif($this->wire('process') == 'ProcessPageListerPro') {
+            $contextLink = '&edit=modules&where%5Bclass%5D=ProcessPageListerPro';
+        }
         elseif($this->wire('page')->process == 'ProcessField') {
             if($this->wire('input')->get('id')) {
                 $contextLink = '&edit=fields&where%5Bid%5D='.(int)$this->wire('input')->get('id');
@@ -95,6 +98,9 @@ class AdminerPanel extends BasePanel {
             else {
                 $contextLink = '&select=hanna_code';
             }
+        }
+        elseif($this->wire('page')->process == 'ProcessJumplinks') {
+            $contextLink = '&select=process_jumplinks';
         }
         elseif($this->wire('page')->process == 'ProcessChangelog') {
             $contextLink = '&select=process_changelog&order=timestamp&desc=1';

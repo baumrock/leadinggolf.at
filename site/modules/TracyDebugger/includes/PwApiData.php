@@ -11,9 +11,6 @@ class TracyPwApiData extends WireData {
 
         if(!$apiData || \TracyDebugger::getDataValue('apiDataVersion') === null || $this->wire('config')->version != \TracyDebugger::getDataValue('apiDataVersion')) {
             $cachedData = json_decode(ltrim($apiData, '~'), true);
-            $configData = $this->wire('modules')->getModuleConfigData("TracyDebugger");
-            $configData['apiDataVersion'] = $this->wire('config')->version;
-            $this->wire('modules')->saveModuleConfigData($this->wire('modules')->get("TracyDebugger"), $configData);
             if($type == 'variables') {
                 $apiData = $this->getVariables();
             }
@@ -46,12 +43,19 @@ class TracyPwApiData extends WireData {
                     }
                 }
                 $this->wire('cache')->save('TracyApiChanges', '~'.json_encode(\TracyDebugger::$apiChanges), WireCache::expireNever);
+
+                $configData = $this->wire('modules')->getModuleConfigData("TracyDebugger");
+                $configData['apiDataVersion'] = $this->wire('config')->version;
+                $this->wire('modules')->saveModuleConfigData($this->wire('modules')->get("TracyDebugger"), $configData);
+
             }
 
             // tilde hack for this: https://github.com/processwire/processwire-issues/issues/775
             $apiData = '~'.json_encode($apiData);
             $this->wire('cache')->save($cacheName, $apiData, WireCache::expireNever);
+
         }
+
         return json_decode(ltrim($apiData, '~'), true);
     }
 
@@ -126,7 +130,13 @@ class TracyPwApiData extends WireData {
         }
 
         // sort by filename with Wire Core, Wire Modules, & Site Modules sections
-        uasort($hooks, function($a, $b) { return $a['filename']>$b['filename']; });
+        uasort($hooks, function($a, $b) {
+            // this could be replaced by "return $a['filename'] <=> $b['filename'];" for PHP 7+
+            if($a['filename'] == $b['filename']) {
+                return 0;
+            }
+            return($a['filename'] < $b['filename']) ? -1 : 1;
+        });
         return $hooks;
     }
 
@@ -213,7 +223,11 @@ class TracyPwApiData extends WireData {
             uksort($methodsList, function($a, $b) {
                 $aStripped = str_replace(array('___','__', '_'), '', $a);
                 $bStripped = str_replace(array('___','__', '_'), '', $b);
-                return $aStripped > $bStripped;
+                // this could be replaced by "return $aStripped <=> $bStripped;" for PHP 7+
+                if($aStripped == $bStripped) {
+                    return 0;
+                }
+                return($aStripped < $bStripped) ? -1 : 1;
             });
 
             foreach($methodsList as $name => $info) {
@@ -267,7 +281,11 @@ class TracyPwApiData extends WireData {
             uksort($propertiesList, function($a, $b) {
                 $aStripped = str_replace(array('___','__', '_'), '', strtolower($a));
                 $bStripped = str_replace(array('___','__', '_'), '', strtolower($b));
-                return $aStripped > $bStripped;
+                // this could be replaced by "return $aStripped <=> $bStripped;" for PHP 7+
+                if($aStripped == $bStripped) {
+                    return 0;
+                }
+                return($aStripped < $bStripped) ? -1 : 1;
             });
 
             foreach($propertiesList as $name => $info) {
@@ -373,6 +391,18 @@ class TracyPwApiData extends WireData {
                             $files['pwFunctions'][$name]['name'] = $name;
                             $files['pwFunctions'][$name]['lineNumber'] = $token[2];
 
+                            if($className) {
+                                if(class_exists("\ProcessWire\\$className")) {
+                                    $r = new \ReflectionMethod("\ProcessWire\\$className", '___'.$methodName);
+                                }
+                                elseif(class_exists($className)) {
+                                    $r = new \ReflectionMethod($className, '___'.$methodName);
+                                }
+                                if(isset($r)) {
+                                    $files['pwFunctions'][$name]['params'] = $this->phpdoc_params($r);
+                                }
+                            }
+
                             $methodStr = ltrim(self::getFunctionLine($lines[($token[2]-1)]), 'function');
                             if(
                                 ($hooks && \TracyDebugger::getDataValue('captainHookToggleDocComment')) ||
@@ -457,7 +487,11 @@ class TracyPwApiData extends WireData {
             uksort($files['pwFunctions'], function($a, $b) {
                 $aLower = strtolower($a);
                 $bLower = strtolower($b);
-                return $aLower > $bLower;
+                // this could be replaced by "return $aLower <=> $bLower;" for PHP 7+
+                if($aLower == $bLower) {
+                    return 0;
+                }
+                return($aLower < $bLower) ? -1 : 1;
             });
         }
         return $files;
@@ -494,6 +528,35 @@ class TracyPwApiData extends WireData {
         else {
             return trim($str);
         }
+    }
+
+
+    private function phpdoc_params(ReflectionMethod $method) {
+        // Retrieve the full PhpDoc comment block
+        $doc = $method->getDocComment();
+
+        // Trim each line from space and star chars
+        $lines = array_map(function($line) {
+            return trim(preg_replace('/\t/', '', $line), " *");
+        }, explode("\n", $doc));
+
+        // Retain lines that start with an @
+        $lines = array_filter($lines, function($line) {
+            return strpos($line, "@") === 0;
+        });
+
+        $args = [];
+
+        // Push each value in the corresponding @param array
+        foreach($lines as $line) {
+            list($param, $value) = explode(' ', "$line ", 2);
+            if($param == '@param') {
+                list($type, $var) = explode(' ', "$value ");
+                $args[$var] = $type;
+            }
+        }
+
+        return $args;
     }
 
 

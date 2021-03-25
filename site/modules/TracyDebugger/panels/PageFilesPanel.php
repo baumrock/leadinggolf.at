@@ -20,7 +20,7 @@ class PageFilesPanel extends BasePanel {
 
         \Tracy\Debugger::timer($this->name);
 
-        if(\TracyDebugger::getDataValue('referencePageEdited') && $this->wire('input')->get('id') && $this->wire('process') == 'ProcessPageEdit') {
+        if(\TracyDebugger::getDataValue('referencePageEdited') && $this->wire('input')->get('id') && ($this->wire('process') == 'ProcessPageEdit' || $this->wire('process') == 'ProcessUser')) {
             $this->p = $this->wire('process')->getPage();
         }
         elseif($this->wire('process') == 'ProcessPageView') {
@@ -33,7 +33,7 @@ class PageFilesPanel extends BasePanel {
         $pageFiles = $this->getPageFiles($this->p);
         $numDiskFiles = count($diskFiles, COUNT_RECURSIVE) - count($diskFiles);
 
-        if($numDiskFiles == 0) {
+        if($numDiskFiles == 0 && count($pageFiles) == 0) {
             $this->filesListStr .= '<p>There are no files associated with this page.';
         }
         else {
@@ -62,7 +62,7 @@ class PageFilesPanel extends BasePanel {
                         <h2><strong>#'.$pid . '</strong> ' . $repeaterFieldName.'</h2>
                         <div class="tracyPageFilesPage">
                             <table>
-                                <th>Filename</th><th>Field</th>'.(count($this->tempFiles) > 0 ? '<th>Temp</th>' : '');
+                                <th>Filename</th><th>Filesize</th><th>Modified</th><th>Field</th>'.(count($this->tempFiles) > 0 ? '<th>Temp</th>' : '');
                 }
 
                 foreach($files as $file) {
@@ -75,12 +75,26 @@ class PageFilesPanel extends BasePanel {
                         $fileField = '';
                         $this->orphanFiles[] = $p->filesManager()->path . $file;
                     }
-                    $this->filesListStr .= '<tr><td><a style="'.$style.' !important" href="'.$p->filesManager()->url.$file.'">'.$file.'</a></td><td style="width: 1px">'.$fileField.'</td>' . (count($this->tempFiles) > 0 ? '<td style="text-align: center">'.(in_array($p->filesManager()->path.$file, $this->tempFiles) ? '	✔' : '').'</td>' : '') . '</tr>';
+                    $this->filesListStr .= '
+                    <tr>
+                        <td><a style="'.$style.' !important" href="'.$p->filesManager()->url.$file.'">'.$file.'</a></td>
+                        <td>'.\TracyDebugger::human_filesize(filesize($p->filesManager()->path . $file)).'</td>
+                        <td>'.date('Y-m-d H:i:s', filemtime($p->filesManager()->path . $file)).'</td>
+                        <td style="width: 1px">'.$fileField.'</td>' .
+                        (count($this->tempFiles) > 0 ? '<td style="text-align: center">'.(in_array($p->filesManager()->path.$file, $this->tempFiles) ? '	✔' : '').'</td>' : '') . '
+                    </tr>';
                 }
 
                 if(isset($this->missingFiles[$pid])) {
                     foreach($this->missingFiles[$pid] as $missingFile) {
-                        $this->filesListStr .= '<tr><td><span style="color: ' . \TracyDebugger::COLOR_ALERT . ' !important">'.pathinfo($missingFile['filename'], PATHINFO_BASENAME).'</td><td>'.$missingFile['field'].'</td>' . (count($this->tempFiles) > 0 ? '<td></td>' : '') . '</tr>';
+                        $this->filesListStr .= '
+                        <tr>
+                            <td><span style="color: ' . \TracyDebugger::COLOR_ALERT . ' !important">'.pathinfo($missingFile['filename'], PATHINFO_BASENAME).'</td>
+                            <td></td>
+                            <td></td>
+                            <td>'.$missingFile['field'].'</td>' .
+                            (count($this->tempFiles) > 0 ? '<td></td>' : '') . '
+                        </tr>';
                     }
                 }
 
@@ -168,20 +182,25 @@ class PageFilesPanel extends BasePanel {
     private function getDiskFiles($p) {
         if(!$p->filesManager()) return array();
         $files = array();
+        $p_of = $p->of();
+        $p->of(false);
         $filesDir = $p->filesManager()->path;
         foreach($p->fields as $f) {
             // this is for nested repeaters
             if($f && $f->type instanceof FieldTypeRepeater) {
                 $repeaterValue = $p->{$f->name};
-                if($repeaterValue instanceof Page) $repeaterValue = array($repeaterValue);
-                foreach($repeaterValue as $subpage) {
-                    $files += $this->getDiskFiles($subpage);
+                if($repeaterValue) {
+                    if($repeaterValue instanceof Page) $repeaterValue = array($repeaterValue);
+                    foreach($repeaterValue as $subpage) {
+                        $files += $this->getDiskFiles($subpage);
+                    }
                 }
             }
             else {
                 $files[$p->id] = array_slice(scandir($filesDir), 2);
             }
         }
+        $p->of($p_of);
         return $files;
     }
 
@@ -202,9 +221,11 @@ class PageFilesPanel extends BasePanel {
             // this is for nested repeaters
             if($item && $f && $f->type instanceof FieldTypeRepeater) {
                 $repeaterValue = $p->{$f->name};
-                if($repeaterValue instanceof Page) $repeaterValue = array($repeaterValue);
-                foreach($repeaterValue as $subpage) {
-                    $files += $this->getPageFiles($subpage);
+                if($repeaterValue) {
+                    if($repeaterValue instanceof Page) $repeaterValue = array($repeaterValue);
+                    foreach($repeaterValue as $subpage) {
+                        $files += $this->getPageFiles($subpage);
+                    }
                 }
             }
             elseif($item && $f && $f->type instanceof FieldTypeFile) {
@@ -238,6 +259,5 @@ class PageFilesPanel extends BasePanel {
         $p->of($p_of);
         return $files;
     }
-
 
 }

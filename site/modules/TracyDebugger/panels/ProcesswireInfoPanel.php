@@ -7,6 +7,10 @@ class ProcesswireInfoPanel extends BasePanel {
     protected $icon;
     protected $newTab;
 
+    public function __construct() {
+        $this->newTab = \TracyDebugger::getDataValue('pWInfoPanelLinksNewTab') ? 'target="_blank"' : '';
+    }
+
     public function getTab() {
         if(\TracyDebugger::isAdditionalBar()) return;
         \Tracy\Debugger::timer('processwireInfo');
@@ -97,7 +101,7 @@ class ProcesswireInfoPanel extends BasePanel {
                 document.getElementById('pageId').addEventListener('keyup', function() {
                     tracyClearGoToPageID("");
                     if(this.value) {
-                        tracyClearGoToPageID("<i style='font-family: FontAwesome !important' class='fa fa-spinner fa-spin'></i>");
+                        tracyClearGoToPageID("<span style='font-family: FontAwesome !important' class='fa fa-spinner fa-spin'></span>");
                         var pid = this.value;
                         if(this.t) clearTimeout(this.t);
                         this.t = setTimeout(function() {
@@ -107,7 +111,7 @@ class ProcesswireInfoPanel extends BasePanel {
                                 if(xmlhttp.readyState == XMLHttpRequest.DONE) {
                                     if(xmlhttp.status == 200 && xmlhttp.responseText !== "[]") {
                                         var pageDetails = JSON.parse(xmlhttp.responseText);
-                                        document.getElementById("pageDetails").innerHTML = "<span style='font-weight:bold'>" + pageDetails.title + "</span>&nbsp;&nbsp;<a href='{$this->wire('config')->urls->admin}setup/template/edit?id="  + pageDetails.template_id + " style='color:#888'>" + pageDetails.template_name + "</a>";
+                                        document.getElementById("pageDetails").innerHTML = "<span style='font-weight:bold'>" + pageDetails.title + "</span>&nbsp;&nbsp;<a href='{$this->wire('config')->urls->admin}setup/template/edit?id="  + pageDetails.template_id + "' style='color:#888'>" + pageDetails.template_name + "</a>";
                                         document.getElementById("idGoToEdit").href = "{$this->wire('config')->urls->admin}page/edit/?id=" + pageDetails.id;
                                         document.getElementById("idGoToView").href = pageDetails.url;
                                         document.getElementById("idGoToOpen").href = "{$this->wire('config')->urls->admin}page/?open=" + pageDetails.id;
@@ -202,7 +206,8 @@ HTML;
             $versionsDetails['Server Details']['items']['ProcessWire'] = $this->wire('config')->version;
             $versionsDetails['Server Details']['items']['PHP'] = phpversion();
             if(isset($_SERVER['SERVER_SOFTWARE'])) $versionsDetails['Server Details']['items']['Webserver'] = current(explode("PHP", $_SERVER['SERVER_SOFTWARE']));
-            $versionsDetails['Server Details']['items']['MySQL'] = $this->wire('database')->query('select version()')->fetchColumn();
+            $versionsDetails['Server Details']['items']['MySQL Server'] = $this->wire('database')->getAttribute(constant("PDO::ATTR_SERVER_VERSION"));
+            $versionsDetails['Server Details']['items']['MySQL Client'] = $this->wire('database')->getAttribute(constant("PDO::ATTR_CLIENT_VERSION"));
 
 
             // Server Settings
@@ -328,7 +333,7 @@ HTML;
                 if(isset(${$name}) && ${$name} !== '') {
                     $out .= '
                     <a href="#" rel="'.$name.'" class="tracy-toggle tracy-collapsed">'.$label.'</a>
-                    <div id="'.$name.'" class="tracy-collapsed">'.${$name}.'</div><br />';
+                    <div id="'.$name.'" class="tracy-collapsed">'.${$name}.'</div>';
                 }
             }
         }
@@ -486,7 +491,7 @@ HTML;
                 $out .=
                 '<li ' . ($withLabels ? ' class="with-labels"' : '') . '>
                     <a onclick="tracyClosePanel(\'ProcesswireInfo\')" '.$this->newTab.' href="'.$cp->url.'"'. (!$withLabels ? ' title="'.$cp->title.'"' : '') . '>
-                        <span style="color:'.\TracyDebugger::COLOR_NORMAL.'; font-family: FontAwesome !important; font-size: 15px; margin-right: 2px" class="fa fa-fw fa-'.$icon.'"></span>'
+                        <i style="color:'.\TracyDebugger::COLOR_NORMAL.'; font-family: FontAwesome !important; font-size: 15px; font-style: normal !important; margin-right: 2px" class="fa fa-fw fa-'.$icon.'"></i>'
                         . ($withLabels ? '&nbsp;'.$cp->title.'</a>' : '</a>&nbsp;') .
                     '</a>
                 </li>';

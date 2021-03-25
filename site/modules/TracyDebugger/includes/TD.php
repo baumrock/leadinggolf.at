@@ -32,6 +32,14 @@ class TD extends TracyDebugger {
     }
 
     /**
+     * Tracy\Debugger::barEcho() shortcut.
+     * @tracySkipLocation
+     */
+    public static function barEcho($str, $title = null) {
+        static::dumpToBar($str, $title, null, true);
+    }
+
+    /**
      * Tracy\Debugger::barDump() shortcut.
      * @tracySkipLocation
      */
@@ -79,7 +87,7 @@ class TD extends TracyDebugger {
      * Tracy\Debugger::dump() shortcut.
      * @tracySkipLocation
      */
-    public static function dump($var, $title = NULL, array $options = NULL, $return = FALSE) {
+    public static function dump($var, $title = NULL, array $options = NULL) {
         if(self::tracyUnavailable()) return false;
         if(is_array($title)) {
             $options = $title;
@@ -93,15 +101,20 @@ class TD extends TracyDebugger {
         $options[Dumper::TRUNCATE] = isset($options['maxLength']) ? $options['maxLength'] : \TracyDebugger::getDataValue('maxLength');
         $options[Dumper::LOCATION] = \TracyDebugger::$fromConsole ? false : Debugger::$showLocation;
         if(version_compare(Debugger::VERSION, '2.6.0', '>=')) $options[Dumper::LAZY] = false;
+        echo '
+        <div class="tracy-inner" style="height:auto !important">
+            <div class="tracy-DumpPanel">';
         if($title) echo '<h2>'.$title.'</h2>';
-        echo static::generateDump($var, $options);
+        echo static::generateDump($var, $options) .
+        '   </div>
+        </div>';
     }
 
     /**
      * Tracy\Debugger::dumpBig() shortcut dumping with maxDepth = 6 and maxLength = 9999.
      * @tracySkipLocation
      */
-    public static function dumpBig($var, $title = NULL, array $options = NULL, $return = FALSE) {
+    public static function dumpBig($var, $title = NULL, array $options = NULL) {
         if(self::tracyUnavailable()) return false;
         if(is_array($title)) {
             $options = $title;
@@ -115,24 +128,30 @@ class TD extends TracyDebugger {
         $options[Dumper::TRUNCATE] = 9999;
         $options[Dumper::LOCATION] = \TracyDebugger::$fromConsole ? false : Debugger::$showLocation;
         if(version_compare(Debugger::VERSION, '2.6.0', '>=')) $options[Dumper::LAZY] = false;
+        echo '
+        <div class="tracy-inner" style="height:auto !important">
+            <div class="tracy-DumpPanel">';
         if($title) echo '<h2>'.$title.'</h2>';
-        echo static::generateDump($var, $options);
+        echo static::generateDump($var, $options) .
+        '   </div>
+        </div>';
     }
 
     /**
      * Send content to dump bar
      * @tracySkipLocation
      */
-    private static function dumpToBar($var, $title = NULL, array $options = NULL) {
+    private static function dumpToBar($var, $title = NULL, array $options = NULL, $echo = false) {
         $dumpItem = array();
         $dumpItem['title'] = $title;
-        $dumpItem['dump'] = static::generateDump($var, $options);
+        $dumpItem['dump'] = $echo ? '<div class="tracy-echo">' . $var . '</div>' : static::generateDump($var, $options);
         array_push(\TracyDebugger::$dumpItems, $dumpItem);
 
         if(isset(\TracyDebugger::$showPanels) && in_array('dumpsRecorder', \TracyDebugger::$showPanels)) {
-            $dumpsRecorderItems = wire('session')->tracyDumpsRecorderItems ?: array();
+            $dumpsFile = wire('config')->paths->cache . 'TracyDebugger/dumps.json';
+            $dumpsRecorderItems = file_exists($dumpsFile) ? json_decode(file_get_contents($dumpsFile), true) : array();
             array_push($dumpsRecorderItems, $dumpItem);
-            wire('session')->tracyDumpsRecorderItems = $dumpsRecorderItems;
+            file_put_contents($dumpsFile, json_encode($dumpsRecorderItems));
         }
     }
 
@@ -141,10 +160,9 @@ class TD extends TracyDebugger {
      * @tracySkipLocation
      */
     private static function generateDump($var, $options) {
-
         // standard options for all dump/barDump variations
-        $options[Dumper::COLLAPSE] = 1;
-        $options[Dumper::COLLAPSE_COUNT] = 1;
+        $options[Dumper::COLLAPSE] = isset($options['collapse']) ? $options['collapse'] : \TracyDebugger::getDataValue('collapse');
+        $options[Dumper::COLLAPSE_COUNT] = isset($options['collapse_count']) ? $options['collapse_count'] : \TracyDebugger::getDataValue('collapse_count');
         $options[Dumper::DEBUGINFO] = isset($options['debugInfo']) ? $options['debugInfo'] : \TracyDebugger::getDataValue('debugInfo');
 
         $out = '<div style="margin: 0 0 10px 0">';
@@ -194,7 +212,7 @@ class TD extends TracyDebugger {
             }
 
             $tabs = '<ul class="tracyDumpTabs">';
-            $tabDivs = '<div style="clear:both">';
+            $tabDivs = '<div style="clear:both; position:relative;">';
             $expandCollapseAll = is_string($var) || is_null($var) ? '' : '<span class="tracyDumpsToggler tracyDumpsExpander" onclick="tracyDumpsToggler(this, true)" title="Expand Level">+</span> <span class="tracyDumpsToggler tracyDumpsCollapser" onclick="tracyDumpsToggler(this, false)" title="Collapse All">–</span>';
             $numTabs = 0;
             foreach(\TracyDebugger::getDataValue('dumpPanelTabs') as $i => $panel) {
@@ -223,12 +241,12 @@ class TD extends TracyDebugger {
 	            $out .= $tabs . $tabDivs;
 	        }
 	        else {
-            	$out .= $lastDump;
+            	$out .= '<div style="clear:both; position:relative;">' . $lastDump . '</div>';
 	        }
 
         }
         else {
-            $out .= Dumper::toHtml($var, $options);
+            $out .= '<div style="clear:both; position:relative;">' . Dumper::toHtml($var, $options) . '</div>';
         }
 
         $out .= '</div>';
@@ -256,7 +274,7 @@ class TD extends TracyDebugger {
      * @tracySkipLocation
      */
     private static function generateEditViewLinks($var, $type, $section) {
-        if($var->id === 0) {
+        if($var->id == '' || $var->id === 0) {
             return;
         }
         else {
