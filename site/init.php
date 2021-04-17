@@ -3,7 +3,7 @@ $wire->addHook('LazyCron::everyDay', function($event) {
   $event->log("Create Backup");
   $zip = $event->modules->get("RockBackup")
     ->find('*')
-    ->from($event->config->paths->templates)
+    ->from($event->config->paths->root)
     ->exclude("/.git/")
     ->exclude("/rock/")
     ->exclude("/vendor/")
@@ -30,4 +30,6 @@ $wire->addHook('LazyCron::everyDay', function($event) {
   $headers[] = 'X-Requested-With: XMLHttpRequest';
   curl_setopt($c, CURLOPT_HTTPHEADER, $headers);
   curl_exec($c);
+
+  $this->wire->files->unlink($zip);
 });
