@@ -25,7 +25,7 @@ $zip = $wire->modules->get("RockBackup")
   ->exclude("/site/assets/logs/")
   ->exclude("/site/modules/.*")
   ->zip([
-    'password' => 'test',
+    'password' => 'golf4ever!',
   ]);
 
 echo "Done\n";
