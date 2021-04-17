@@ -4,3 +4,6 @@
 [submodule "rock"]
 	path = rock
 	url = git@github.com:baumrock/RockShell.git
+[submodule "site/modules/RockBackup"]
+	path = site/modules/RockBackup
+	url = git@github.com:baumrock/RockBackup.git
