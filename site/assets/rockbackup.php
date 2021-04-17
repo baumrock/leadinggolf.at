@@ -15,7 +15,7 @@ if(date("Hi") == "0321") {
   $backup
     ->mail($mailfrom, $mailto, 'backup started')
     ->find('*')
-    ->from($wire->config->paths->templates)
+    ->from($wire->config->paths->root)
     ->exclude("/.git/")
     ->exclude("/rock/")
     ->exclude("/vendor/")
