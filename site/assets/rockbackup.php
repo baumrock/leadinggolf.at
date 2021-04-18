@@ -16,7 +16,6 @@ if(date("wHi", $now) == "10321") {
   $backup = $modules->get('RockBackup');
   $backup
     ->mail($mailfrom, $mailto, 'backup started')
-    ->addDB(true)
     ->find('*')
     ->from($wire->config->paths->root)
     ->exclude("/.git/")
@@ -27,6 +26,7 @@ if(date("wHi", $now) == "10321") {
     ->exclude("/site/assets/sessions/")
     ->exclude("/site/assets/logs/")
     ->exclude("/site/modules/.*")
+    ->addDB(true)
     ->zip([
       'password' => 'Golf4Ever!',
       'filename' => 'full-weekly-#',
