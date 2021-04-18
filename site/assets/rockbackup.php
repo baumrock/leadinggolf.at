@@ -1,5 +1,11 @@
 <?php namespace ProcessWire;
 // php site/assets/rockbackup.php
+
+$daily = date("Hi") == "0321"; // every day at 03:21
+$weekly = date("wHi") == "10321"; // every monday at 03:21
+if(!$daily AND !$weekly) return;
+
+// boot processwire
 chdir(__DIR__);
 chdir("../../"); // pw root folder
 include("index.php");
@@ -8,14 +14,38 @@ ini_set('max_execution_time', 60*10);
 
 $mailfrom = 'backup@baumrock.com';
 $mailto = 'office@baumrock.com';
-$now = time();
 
-// every monday at 03:21
-if(date("wHi", $now) == "10321") {
+/** @var RockBackup $backup */
+$backup = $modules->get('RockBackup');
+$backup->mail($mailfrom, $mailto, 'backup started');
+
+if($daily) {
   /** @var RockBackup $backup */
   $backup = $modules->get('RockBackup');
   $backup
-    ->mail($mailfrom, $mailto, 'backup started')
+    ->find('*')
+    ->from($wire->config->paths->site)
+    ->exclude("/assets/files/")
+    ->exclude("/assets/backups/*/")
+    ->exclude("/assets/cache/")
+    ->exclude("/assets/sessions/")
+    ->exclude("/assets/logs/")
+    ->exclude("/modules/.*")
+    ->addDB(true)
+    ->zip([
+      'password' => 'Golf4Ever!',
+      'filename' => 'site-daily-#',
+      'max' => 7,
+    ])
+    ->saveToNextCloud('https://cloud.baumrock.com/index.php/s/zcPDiEYnFdZsPoS')
+    ->unlink()
+    ->mail($mailfrom, $mailto, 'daily backup finished')
+    ;
+}
+if($weekly) {
+  /** @var RockBackup $backup */
+  $backup = $modules->get('RockBackup');
+  $backup
     ->find('*')
     ->from($wire->config->paths->root)
     ->exclude("/.git/")
@@ -34,6 +64,6 @@ if(date("wHi", $now) == "10321") {
     ])
     ->saveToNextCloud('https://cloud.baumrock.com/index.php/s/zcPDiEYnFdZsPoS')
     ->unlink()
-    ->mail($mailfrom, $mailto, 'backup finished')
+    ->mail($mailfrom, $mailto, 'weekly backup finished')
     ;
 }
