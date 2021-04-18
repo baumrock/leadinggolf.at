@@ -9,8 +9,8 @@ ini_set('max_execution_time', 60*10);
 $mailfrom = 'backup@baumrock.com';
 $mailto = 'office@baumrock.com';
 
-// daily backup at 03:21
-if(date("Hi") == "0321") {
+// every monday at 03:21
+if(date("wHi") == "10321") {
   /** @var RockBackup $backup */
   $backup = $modules->get('RockBackup');
   $backup
