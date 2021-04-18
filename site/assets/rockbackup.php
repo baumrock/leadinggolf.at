@@ -10,7 +10,7 @@ $mailfrom = 'backup@baumrock.com';
 $mailto = 'office@baumrock.com';
 
 // daily backup at 03:21
-if(date("Hi") == "1300") {
+if(date("Hi") == "0321") {
   /** @var RockBackup $backup */
   $backup = $modules->get('RockBackup');
   $backup
