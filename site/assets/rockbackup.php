@@ -14,7 +14,7 @@ include("index.php");
 ini_set('max_execution_time', 60*10);
 /** @var Wire $wire */
 
-$mailfrom = 'backup@baumrock.com';
+$mailfrom = ['backup@baumrock.com', 'baumrock.com Backup Robot'];
 $mailto = 'office@baumrock.com';
 $cloud = 'https://nx17448.your-storageshare.de/s/tScxGq2EqAE7xDB';
 
