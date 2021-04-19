@@ -62,7 +62,7 @@ if($weekly) {
       'filename' => 'full-weekly-#',
       'max' => 4,
     ])
-    ->saveToNextCloud('https://cloud.baumrock.com/index.php/s/zcPDiEYnFdZsPoS')
+    ->saveToNextCloud('https://nx17448.your-storageshare.de/s/tScxGq2EqAE7xDB')
     ->unlink()
     ->mail($mailfrom, $mailto, 'weekly backup finished')
     ;
