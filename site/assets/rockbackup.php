@@ -14,6 +14,7 @@ ini_set('max_execution_time', 60*10);
 
 $mailfrom = 'backup@baumrock.com';
 $mailto = 'office@baumrock.com';
+$cloud = 'https://nx17448.your-storageshare.de/s/tScxGq2EqAE7xDB';
 
 /** @var RockBackup $backup */
 $backup = $modules->get('RockBackup');
@@ -37,7 +38,7 @@ if($daily) {
       'filename' => 'site-daily-#',
       'max' => 7,
     ])
-    ->saveToNextCloud('https://cloud.baumrock.com/index.php/s/zcPDiEYnFdZsPoS')
+    ->saveToNextCloud($cloud)
     ->unlink()
     ->mail($mailfrom, $mailto, 'daily backup finished')
     ;
@@ -62,7 +63,7 @@ if($weekly) {
       'filename' => 'full-weekly-#',
       'max' => 4,
     ])
-    ->saveToNextCloud('https://nx17448.your-storageshare.de/s/tScxGq2EqAE7xDB')
+    ->saveToNextCloud($cloud)
     ->unlink()
     ->mail($mailfrom, $mailto, 'weekly backup finished')
     ;
