@@ -1,9 +1,11 @@
 <?php namespace ProcessWire;
 // php site/assets/rockbackup.php
 
-$daily = date("Hi") == "0321"; // every day at 03:21
-$weekly = date("wHi") == "10321"; // every monday at 03:21
-if(!$daily AND !$weekly) return;
+$time = "0325";
+$daily = date("Hi") == $time; // every day at time
+$weekly = date("wHi") == "1$time"; // every monday at time
+$yearly = date("md-Hi") == "0420-$time"; // every april-20 at time
+if(!$daily AND !$weekly AND !$yearly) return;
 
 // boot processwire
 chdir(__DIR__);
@@ -66,5 +68,29 @@ if($weekly) {
     ->saveToNextCloud($cloud)
     ->unlink()
     ->mail($mailfrom, $mailto, 'weekly backup finished')
+    ;
+}
+if($yearly) {
+  /** @var RockBackup $backup */
+  $backup = $modules->get('RockBackup');
+  $backup
+    ->find('*')
+    ->from($wire->config->paths->root)
+    ->exclude("/.git/")
+    ->exclude("/rock/")
+    ->exclude("/vendor/")
+    ->exclude("/site/assets/backups/*/")
+    ->exclude("/site/assets/cache/")
+    ->exclude("/site/assets/sessions/")
+    ->exclude("/site/assets/logs/")
+    ->exclude("/site/modules/.*")
+    ->addDB(true)
+    ->zip([
+      'password' => 'Golf4Ever!',
+      'filename' => 'full-yearly-'.date("Y-m-d"),
+    ])
+    ->saveToNextCloud($cloud)
+    ->unlink()
+    ->mail($mailfrom, $mailto, 'yearly backup finished')
     ;
 }
