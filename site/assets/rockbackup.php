@@ -14,7 +14,7 @@ include("index.php");
 ini_set('max_execution_time', 60*10);
 /** @var Wire $wire */
 
-$mailfrom = ['backup@baumrock.com', 'baumrock.com Backup Robot'];
+$mailfrom = 'baumrock.com Backup Robot <backup@baumrock.com>';
 $mailto = 'office@baumrock.com';
 $cloud = 'https://nx17448.your-storageshare.de/s/tScxGq2EqAE7xDB';
 
@@ -42,7 +42,7 @@ if($daily) {
     ])
     ->saveToNextCloud($cloud)
     ->unlink()
-    ->mail($mailfrom, $mailto, 'daily backup finished')
+    ->mail($mailfrom, $mailto, "daily backup finished\n$cloud")
     ;
 }
 if($weekly) {
@@ -67,7 +67,7 @@ if($weekly) {
     ])
     ->saveToNextCloud($cloud)
     ->unlink()
-    ->mail($mailfrom, $mailto, 'weekly backup finished')
+    ->mail($mailfrom, $mailto, "weekly backup finished\n$cloud")
     ;
 }
 if($yearly) {
@@ -91,6 +91,6 @@ if($yearly) {
     ])
     ->saveToNextCloud($cloud)
     ->unlink()
-    ->mail($mailfrom, $mailto, 'yearly backup finished')
+    ->mail($mailfrom, $mailto, "yearly backup finished\n$cloud")
     ;
 }
