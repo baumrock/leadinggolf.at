@@ -20,7 +20,7 @@ $cloud = 'https://nx17448.your-storageshare.de/s/tScxGq2EqAE7xDB';
 
 /** @var RockBackup $backup */
 $backup = $modules->get('RockBackup');
-$backup->mail($mailfrom, $mailto, 'backup started');
+$backup->mail('backup started', $mailto, $mailfrom);
 
 if($daily) {
   /** @var RockBackup $backup */
@@ -42,7 +42,7 @@ if($daily) {
     ])
     ->saveToNextCloud($cloud)
     ->unlink()
-    ->mail($mailfrom, $mailto, "daily backup finished\n$cloud")
+    ->mail("daily backup finished\n$cloud", $mailto, $mailfrom)
     ;
 }
 if($weekly) {
@@ -67,7 +67,7 @@ if($weekly) {
     ])
     ->saveToNextCloud($cloud)
     ->unlink()
-    ->mail($mailfrom, $mailto, "weekly backup finished\n$cloud")
+    ->mail("weekly backup finished\n$cloud", $mailto, $mailfrom)
     ;
 }
 if($yearly) {
@@ -91,6 +91,6 @@ if($yearly) {
     ])
     ->saveToNextCloud($cloud)
     ->unlink()
-    ->mail($mailfrom, $mailto, "yearly backup finished\n$cloud")
+    ->mail("yearly backup finished\n$cloud", $mailto, $mailfrom)
     ;
 }
